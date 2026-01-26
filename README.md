@@ -1,4 +1,4 @@
-# Senior Project Dashboard
+# Dashboard
 ## Step 0
 ```
 node -v
