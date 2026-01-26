@@ -44,6 +44,16 @@ While code:
 npm run dev
 ```
 
+## Step 4
+In frontend Folder <dashboard\frontend\\>
+```
+npm install live-server
+```
+Then run
+```
+npx live-server
+```
+
 
 
 
