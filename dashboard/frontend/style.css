@@ -1,0 +1,8 @@
+body {
+  font-family: Arial;
+  padding: 30px;
+}
+
+canvas {
+  max-width: 700px;
+}
