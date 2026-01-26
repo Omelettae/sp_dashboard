@@ -66,7 +66,7 @@ or
 ```
 "scripts": {
   "start": "live-server",
-  "dev": "live-server --port=5500 --open=index.html"
+  "dev": "live-server --port=5500"
 }
 ```
 then run
