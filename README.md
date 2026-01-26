@@ -7,11 +7,12 @@ mysql --version
 ```
 
 ## Step 1
-Create Folder:
+Check Folder:
 ```
 dashboard/
 ├─ backend/
-└─ frontend/
+├─ frontend/
+└─ database.sql
 ```
 
 ## Step 2
