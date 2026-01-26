@@ -59,19 +59,22 @@ npx live-server
 in <frontend/package.json>
 ```
 "scripts": {
-  "start": "live-server --port=5500 --no-browser"
-}
-```
-or
-```
-"scripts": {
-  "start": "live-server",
-  "dev": "live-server --port=5500"
+  "start": "live-server --host=0.0.0.0 --port=5500 --no-browser"
 }
 ```
 then run
 ```
 npm start
+```
+
+## Note 1
+Change API in <frontend/script.js>
+```
+const API = "http://backend_IP:5000/api"
+```
+Check by run
+```
+ipconfig
 ```
 
 
