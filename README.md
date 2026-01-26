@@ -48,6 +48,7 @@ npm run dev
 ## Step 4
 In frontend Folder <dashboard\frontend\\>
 ```
+npm init -y
 npm install live-server
 ```
 Then run
