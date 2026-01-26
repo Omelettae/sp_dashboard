@@ -11,12 +11,29 @@ Check Folder:
 ```
 dashboard/
 ├─ backend/
+|       ├─ .env
+|       └─ server.js
 ├─ frontend/
+|       ├─ html/
+|       |    ├─ index.html
+|       |    └─ wind.html
+|       ├─ js/
+|       |    ├─ config.js
+|       |    ├─ script.js
+|       |    └─ wind.js
+|       └─ style.css
 └─ database.sql
 ```
 
+## Step 1.5
+Create User and run Database
+```
+Get user info from .env file in <backend/.env>
+Don't forget about Schema Privileges
+```
+
 ## Step 2
-In backend Folder <dashboard\backend\\> <br><br>
+In backend terminal <dashboard\backend\\> <br><br>
 
 Normal Dependencies:
 ```
@@ -46,15 +63,12 @@ npm run dev
 ```
 
 ## Step 4
-In frontend Folder <dashboard\frontend\\>
+In frontend terminal <dashboard\frontend\\>
 ```
 npm init -y
 npm install live-server
 ```
-Then run
-```
-npx live-server
-```
+
 ## Step 5
 in <frontend/package.json>
 ```
@@ -66,16 +80,26 @@ then run
 ```
 npm start
 ```
+then open
+```
+http://IP_of_pc_that_run_backend:5500/html/
+```
+or
+```
+http://localhost:5500/html/
+```
+if localhost
 
 ## Note 1
-Change API in <frontend/script.js>
+Change API in <frontend/js/config.js>
 ```
-const API = "http://backend_IP:5000/api"
+const API = "http://IP_of_pc_that_run_backend:5000/api"
 ```
 Check by run
 ```
 ipconfig
 ```
+on backend pc
 
 
 
