@@ -55,6 +55,24 @@ Then run
 ```
 npx live-server
 ```
+## Step 5
+in <frontend/package.json>
+```
+"scripts": {
+  "start": "live-server --port=5500 --no-browser"
+}
+```
+or
+```
+"scripts": {
+  "start": "live-server",
+  "dev": "live-server --port=5500 --open=index.html"
+}
+```
+then run
+```
+npm start
+```
 
 
 
