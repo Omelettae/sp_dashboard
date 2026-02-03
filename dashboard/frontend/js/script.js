@@ -126,6 +126,20 @@ function updateChart() {
       })
     }
 
+    // VPD
+    if (selectedMetrics.includes("VPD")) {
+      datasets.push({
+        label: `${sensor} (VPD)`,
+        data: sensorData
+          .filter(d => d.temperature !== null)
+          .map(d => ({
+            x: new Date(d.datetime),
+            y: d.temperature
+          })),
+        fill: false
+      })
+    }
+
   })
 
   chart.data.datasets = datasets
