@@ -131,10 +131,10 @@ function updateChart() {
       datasets.push({
         label: `${sensor} (VPD)`,
         data: sensorData
-          .filter(d => d.temperature !== null)
+          .filter(d => d.VPD !== null)
           .map(d => ({
             x: new Date(d.datetime),
-            y: d.temperature
+            y: d.VPD
           })),
         fill: false
       })
@@ -152,3 +152,4 @@ function updateChart() {
 // =====================
 loadData()
 setInterval(loadData, 5000)
+
