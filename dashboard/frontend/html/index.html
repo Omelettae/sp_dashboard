@@ -1,7 +1,7 @@
 <!DOCTYPE html>
 <html>
   <a href="index.html">Temp/Humidity/VPD</a> |
-  <a href="wind3.html">Wind</a>
+<a href="wind3.html">Wind Speed</a>
 <hr>
 
 <head>
@@ -14,17 +14,17 @@
 <body>
   <h2>Sensor Dashboard</h2>
 
-  <div id="metrics">
-    <label><input type="checkbox" value="temperature" checked> Temperature</label>
-    <label><input type="checkbox" value="humidity" checked> Humidity</label>
-    <label><input type="checkbox" value="VPD" checked> VPD</label>
-  </div>
-  <br>
-
+  <h3>Sensors</h3>
   <div id="checkboxes"></div>
-  <br>
 
-  <canvas id="chart" height="100"></canvas>
+  <h3>Temperature</h3>
+  <canvas id="tempChart" height="100"></canvas>
+
+  <h3>Humidity</h3>
+  <canvas id="humiChart" height="100"></canvas>
+
+  <h3>VPD</h3>
+  <canvas id="VPDChart" height="100"></canvas>
 
   <script src="../js/config.js"></script>
   <script src="../js/script.js"></script>
