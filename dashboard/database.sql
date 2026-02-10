@@ -24,7 +24,9 @@ CREATE TABLE SensorLog (
 );
 
 INSERT INTO Sensor(sensorType, sensorLocation) VALUES
-('DHT22-D17', 'Outside Dome'),
+('DHT22-D17-Pi5', 'Outside Dome'),
 ('DHT22-D22', 'Inside Dome'),
 ('DHT22-D27', 'Inside Box'),
-('5-in-one-sensor', 'Outside Dome');
+('5-in-one-sensor', 'Outside Dome'),
+('DHT22-D17-Pi4-1', 'Inside Dome'),
+('DHT22-D17-Pi4-2', 'Inside Box');
