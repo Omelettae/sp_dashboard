@@ -120,12 +120,15 @@ app.post('/api/getDataDHT', async (req, res) => {
 
 app.post('/api/getDataC5A', async (req, res) => {
   try {
-    const { sensorID, windSpeed, windDirection, time } = req.body;
+    const { sensorID, windSpeed, windDirection, temperature, humidity, VPD, time } = req.body;
 
     if (
       sensorID == null ||
       windSpeed == null ||
       windDirection == null ||
+      temperature == null ||
+      humidity == null ||
+      VPD == null ||
       time == null
     ) {
       return res.status(400).json({ message: 'Missing C5A data' });
@@ -133,15 +136,18 @@ app.post('/api/getDataC5A', async (req, res) => {
 
     const sql = `
       INSERT INTO SensorLog
-      (sensorID, datetime, windspeed, windDirection)
-      VALUES (?, ?, ?, ?)
+      (sensorID, datetime, temperature, humidity windspeed, windDirection,  VPD)
+      VALUES (?, ?, ?, ?, ?, ?, ?)
     `;
 
     const [result] = await pool.execute(sql, [
       sensorID,
       time,
+      temperature,
+      humidity,
       windSpeed,
       windDirection,
+      VPD,
     ]);
 
     res.status(200).json({
@@ -160,3 +166,4 @@ app.post('/api/getDataC5A', async (req, res) => {
 app.listen(process.env.PORT, "0.0.0.0", () => {
   console.log(`Server running on port ${process.env.PORT}`);
 });
+
