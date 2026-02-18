@@ -9,7 +9,6 @@ erDiagram
 
     SensorLog {
         int logID PK
-        int sensorID FK
         datetime datetime
         decimal temperature
         decimal humidity
