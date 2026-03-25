@@ -62,7 +62,7 @@ app.get('/api/logs', async (req, res) => {
   const { hours, start, end } = req.query
 
   let query = `
-    SELECT s.sensorID, s.sensorType, s.sensorLocation,
+    SELECT s.sensorID, s.sensorType, 
            l.datetime, l.temperature, l.humidity,
            l.windspeed, l.windDirection, l.VPD
     FROM SensorLog l
@@ -84,6 +84,38 @@ app.get('/api/logs', async (req, res) => {
   const [rows] = await pool.query(query, params)
   res.json(rows)
 })
+
+app.post('/api/ErrorLog', async (req, res) => {
+  try {
+    const { sensorID, errorType, errorMessage, severity } = req.body;
+
+    if (!errorMessage) {
+      return res.status(400).json({ message: 'Error message is required' });
+    }
+
+    const sql = `
+      INSERT INTO ErrorLog (sensorID, errorType, errorMessage, severity)
+      VALUES (?, ?, ?, ?)
+    `;
+
+    const [result] = await pool.execute(sql, [
+      sensorID || null,
+      errorType || 'UNKNOWN',
+      errorMessage,
+      severity || 'LOW'
+    ]);
+
+    res.status(200).json({
+      success: true,
+      errorID: result.insertId
+    });
+
+  } catch (err) {
+    console.error("Error logging failed:", err);
+    res.status(500).json({ success: false, error: err.message });
+  }
+});
+
 
 app.post('/api/getDataDHT', async (req, res) => {
   try {
