@@ -2,12 +2,12 @@
 https://github.com/Omelettae/dht22
 
 # Version
-| Server | Sensor |
-| ------ | ------ |
-| v2.0.0 | v1.0.0 |   
-| v1.1.2 | v1.0.0 |
-| v1.1.1 | v1.0.0 |
-| v1.1.0 | v1.0.0 |
+| Server | Sensor | Database |
+| ------ | ------ | ------ |
+| v2.0.0 | v1.0.0 | v2.0.0 |   
+| v1.1.2 | v1.0.0 | v1.0.0 |
+| v1.1.1 | v1.0.0 | v1.0.0 |
+| v1.1.0 | v1.0.0 | v1.0.0 |
 
 # Dashboard
 ## Step 0
