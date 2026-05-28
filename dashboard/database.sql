@@ -106,3 +106,17 @@ CREATE TABLE ClimateRules (
         REFERENCES Actuator(actuatorID)
         ON DELETE CASCADE
 );
+
+INSERT INTO Location (locationName) VALUES
+('Outside Dome'),
+('Inside Dome'),
+('Inside Box');
+
+INSERT INTO Sensor (sensorType, locationID)
+VALUES
+('DHT22-D17-Pi5', (SELECT locationID FROM Location WHERE locationName='Outside Dome')),
+('DHT22-D22', (SELECT locationID FROM Location WHERE locationName='Inside Dome')),
+('DHT22-D27', (SELECT locationID FROM Location WHERE locationName='Inside Box')),
+('5-in-one-sensor', (SELECT locationID FROM Location WHERE locationName='Outside Dome')),
+('DHT22-D17-Pi4-1', (SELECT locationID FROM Location WHERE locationName='Inside Dome')),
+('DHT22-D17-Pi4-2', (SELECT locationID FROM Location WHERE locationName='Inside Box'));
