@@ -21,18 +21,30 @@ CREATE TABLE SensorType(
 -- Sensor table
 CREATE TABLE Sensor (
     sensorID INT AUTO_INCREMENT PRIMARY KEY,
-    typeID INT,
-    locationID INT,
-    sensorDescription TEXT,
-    deviceUUID VARCHAR(100) NULL,
+
+    typeID INT NOT NULL,
+    locationID INT NOT NULL,
+
+    deviceUUID CHAR(36) NOT NULL,
+
+    sensorDescription TEXT NULL,
+
     createdAt TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
 
-    FOREIGN KEY (locationID)
-        REFERENCES Location(locationID)
-        ON DELETE SET NULL,
-	FOREIGN KEY (typeID)
-        REFERENCES SensorType(typeID)
-        ON DELETE SET NULL
+    CONSTRAINT fk_sensor_type
+        FOREIGN KEY (typeID)
+        REFERENCES SensorType(typeID),
+
+    CONSTRAINT fk_sensor_location
+        FOREIGN KEY (locationID)
+        REFERENCES Location(locationID),
+
+    CONSTRAINT uq_sensor_identity
+        UNIQUE (
+            deviceUUID,
+            typeID,
+            locationID
+        )
 );
 
 -- Sensor log table
