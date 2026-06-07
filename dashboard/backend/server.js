@@ -50,6 +50,7 @@ app.post('/api/registerSensor', async (req, res) => {
       locationName
     } = req.body;
 
+    // Validate input
     if (!deviceUUID || !sensorType || !locationName) {
       return res.status(400).json({
         success: false,
@@ -57,25 +58,10 @@ app.post('/api/registerSensor', async (req, res) => {
       });
     }
 
-    // Check if this device is already registered
-    const [existingSensor] = await pool.execute(
-      `
-      SELECT sensorID
-      FROM Sensor
-      WHERE deviceUUID = ?
-      `,
-      [deviceUUID]
-    );
+    // =========================
+    // Find or Create SensorType
+    // =========================
 
-    if (existingSensor.length > 0) {
-      return res.json({
-        success: true,
-        sensorID: existingSensor[0].sensorID,
-        existing: true
-      });
-    }
-
-    // Find or create SensorType
     let [typeRows] = await pool.execute(
       `
       SELECT typeID
@@ -88,6 +74,7 @@ app.post('/api/registerSensor', async (req, res) => {
     let typeID;
 
     if (typeRows.length === 0) {
+
       const [result] = await pool.execute(
         `
         INSERT INTO SensorType (sensorType)
@@ -97,11 +84,17 @@ app.post('/api/registerSensor', async (req, res) => {
       );
 
       typeID = result.insertId;
+
     } else {
+
       typeID = typeRows[0].typeID;
+
     }
 
-    // Find or create Location
+    // ======================
+    // Find or Create Location
+    // ======================
+
     let [locationRows] = await pool.execute(
       `
       SELECT locationID
@@ -114,6 +107,7 @@ app.post('/api/registerSensor', async (req, res) => {
     let locationID;
 
     if (locationRows.length === 0) {
+
       const [result] = await pool.execute(
         `
         INSERT INTO Location (locationName)
@@ -123,11 +117,47 @@ app.post('/api/registerSensor', async (req, res) => {
       );
 
       locationID = result.insertId;
+
     } else {
+
       locationID = locationRows[0].locationID;
+
     }
 
-    // Create new Sensor
+    // ======================================
+    // Check Existing Sensor
+    // UUID + Type + Location
+    // ======================================
+
+    const [existingSensor] = await pool.execute(
+      `
+      SELECT sensorID
+      FROM Sensor
+      WHERE deviceUUID = ?
+      AND typeID = ?
+      AND locationID = ?
+      `,
+      [
+        deviceUUID,
+        typeID,
+        locationID
+      ]
+    );
+
+    if (existingSensor.length > 0) {
+
+      return res.status(200).json({
+        success: true,
+        sensorID: existingSensor[0].sensorID,
+        existing: true
+      });
+
+    }
+
+    // ======================
+    // Create New Sensor
+    // ======================
+
     const [sensorResult] = await pool.execute(
       `
       INSERT INTO Sensor (
@@ -144,19 +174,21 @@ app.post('/api/registerSensor', async (req, res) => {
       ]
     );
 
-    res.status(201).json({
+    return res.status(201).json({
       success: true,
       sensorID: sensorResult.insertId,
       existing: false
     });
 
   } catch (err) {
-    console.error(err);
 
-    res.status(500).json({
+    console.error('registerSensor error:', err);
+
+    return res.status(500).json({
       success: false,
       error: err.message
     });
+
   }
 });
 // GET logs for last X hours
