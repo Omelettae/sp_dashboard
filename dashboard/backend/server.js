@@ -42,6 +42,123 @@ app.get('/api/sensors', async (req, res) => {
   res.json(rows)
 })
 
+app.post('/api/registerSensor', async (req, res) => {
+  try {
+    const {
+      deviceUUID,
+      sensorType,
+      locationName
+    } = req.body;
+
+    if (!deviceUUID || !sensorType || !locationName) {
+      return res.status(400).json({
+        success: false,
+        message: 'deviceUUID, sensorType and locationName are required'
+      });
+    }
+
+    // Check if this device is already registered
+    const [existingSensor] = await pool.execute(
+      `
+      SELECT sensorID
+      FROM Sensor
+      WHERE deviceUUID = ?
+      `,
+      [deviceUUID]
+    );
+
+    if (existingSensor.length > 0) {
+      return res.json({
+        success: true,
+        sensorID: existingSensor[0].sensorID,
+        existing: true
+      });
+    }
+
+    // Find or create SensorType
+    let [typeRows] = await pool.execute(
+      `
+      SELECT typeID
+      FROM SensorType
+      WHERE sensorType = ?
+      `,
+      [sensorType]
+    );
+
+    let typeID;
+
+    if (typeRows.length === 0) {
+      const [result] = await pool.execute(
+        `
+        INSERT INTO SensorType (sensorType)
+        VALUES (?)
+        `,
+        [sensorType]
+      );
+
+      typeID = result.insertId;
+    } else {
+      typeID = typeRows[0].typeID;
+    }
+
+    // Find or create Location
+    let [locationRows] = await pool.execute(
+      `
+      SELECT locationID
+      FROM Location
+      WHERE locationName = ?
+      `,
+      [locationName]
+    );
+
+    let locationID;
+
+    if (locationRows.length === 0) {
+      const [result] = await pool.execute(
+        `
+        INSERT INTO Location (locationName)
+        VALUES (?)
+        `,
+        [locationName]
+      );
+
+      locationID = result.insertId;
+    } else {
+      locationID = locationRows[0].locationID;
+    }
+
+    // Create new Sensor
+    const [sensorResult] = await pool.execute(
+      `
+      INSERT INTO Sensor (
+        typeID,
+        locationID,
+        deviceUUID
+      )
+      VALUES (?, ?, ?)
+      `,
+      [
+        typeID,
+        locationID,
+        deviceUUID
+      ]
+    );
+
+    res.status(201).json({
+      success: true,
+      sensorID: sensorResult.insertId,
+      existing: false
+    });
+
+  } catch (err) {
+    console.error(err);
+
+    res.status(500).json({
+      success: false,
+      error: err.message
+    });
+  }
+});
 // GET logs for last X hours
 // app.get('/api/logs', async (req, res) => {
 //   const hours = req.query.hours || 2
@@ -62,7 +179,7 @@ app.get('/api/logs', async (req, res) => {
   const { hours, start, end } = req.query
 
   let query = `
-    SELECT s.sensorID, s.sensorType, 
+    SELECT s.sensorID, s.sensorDescription, 
            l.datetime, l.temperature, l.humidity,
            l.windspeed, l.windDirection, l.VPD
     FROM SensorLog l
