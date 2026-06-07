@@ -12,15 +12,26 @@ CREATE TABLE Location (
     createdAt TIMESTAMP DEFAULT CURRENT_TIMESTAMP
 );
 
+-- Sensor List table
+CREATE TABLE SensorType(
+	typeID INT AUTO_INCREMENT PRIMARY KEY,
+    sensorType VARCHAR(50)
+);
+
 -- Sensor table
 CREATE TABLE Sensor (
     sensorID INT AUTO_INCREMENT PRIMARY KEY,
-    sensorType VARCHAR(50),
+    typeID INT,
     locationID INT,
+    sensorDescription TEXT,
+    deviceUUID VARCHAR(100) NULL,
     createdAt TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
 
     FOREIGN KEY (locationID)
         REFERENCES Location(locationID)
+        ON DELETE SET NULL,
+	FOREIGN KEY (typeID)
+        REFERENCES SensorType(typeID)
         ON DELETE SET NULL
 );
 
@@ -106,17 +117,3 @@ CREATE TABLE ClimateRules (
         REFERENCES Actuator(actuatorID)
         ON DELETE CASCADE
 );
-
-INSERT INTO Location (locationName) VALUES
-('Outside Dome'),
-('Inside Dome'),
-('Inside Box');
-
-INSERT INTO Sensor (sensorType, locationID)
-VALUES
-('DHT22-D17-Pi5', (SELECT locationID FROM Location WHERE locationName='Outside Dome')),
-('DHT22-D22', (SELECT locationID FROM Location WHERE locationName='Inside Dome')),
-('DHT22-D27', (SELECT locationID FROM Location WHERE locationName='Inside Box')),
-('5-in-one-sensor', (SELECT locationID FROM Location WHERE locationName='Outside Dome')),
-('DHT22-D17-Pi4-1', (SELECT locationID FROM Location WHERE locationName='Inside Dome')),
-('DHT22-D17-Pi4-2', (SELECT locationID FROM Location WHERE locationName='Inside Box'));
