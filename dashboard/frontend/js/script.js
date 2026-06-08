@@ -10,7 +10,14 @@ let sensorsCreated = false
 // =====================
 async function loadData() {
   const res = await fetch(`${API}/logs?hours=2`)
-  allData = await res.json()
+  allData = (await res.json()).map(d => ({
+    ...d,
+    sensorName:
+      d.sensorDescription ||
+      ((d.sensorType || d.locationName)
+        ? `${d.sensorType || 'unknown'}_${d.locationName || 'unknown'}`
+        : 'unknown')
+  }))
   console.log(allData)
 
   if (!sensorsCreated) {
@@ -27,7 +34,7 @@ async function loadData() {
 // Create sensor toggles
 // =====================
 function createSensorCheckboxes() {
-  const sensors = [...new Set(allData.map(d => d.sensorType))]
+  const sensors = [...new Set(allData.map(d => d.sensorName))]
   const container = document.getElementById("checkboxes")
 
   container.innerHTML = ""
@@ -158,7 +165,7 @@ function updateTempChart() {
 
   selectedSensors.forEach(sensor => {
 
-    const sensorData = allData.filter(d => d.sensorType === sensor)
+    const sensorData = allData.filter(d => d.sensorName === sensor)
 
     datasets.push({
       label: `${sensor}`,
@@ -186,7 +193,7 @@ function updateHumiChart() {
 
   selectedSensors.forEach(sensor => {
 
-    const sensorData = allData.filter(d => d.sensorType === sensor)
+    const sensorData = allData.filter(d => d.sensorName === sensor)
  
     datasets.push({
       label: `${sensor}`,
@@ -215,7 +222,7 @@ function updateVPDChart() {
 
   selectedSensors.forEach(sensor => {
 
-    const sensorData = allData.filter(d => d.sensorType === sensor)
+    const sensorData = allData.filter(d => d.sensorName === sensor)
  
     datasets.push({
       label: `${sensor}`,

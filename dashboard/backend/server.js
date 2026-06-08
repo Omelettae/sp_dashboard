@@ -211,11 +211,20 @@ app.get('/api/logs', async (req, res) => {
   const { hours, start, end } = req.query
 
   let query = `
-    SELECT s.sensorID, s.sensorDescription, 
-           l.datetime, l.temperature, l.humidity,
-           l.windspeed, l.windDirection, l.VPD
+    SELECT s.sensorID,
+           s.sensorDescription,
+           t.sensorType,
+           loc.locationName,
+           l.datetime,
+           l.temperature,
+           l.humidity,
+           l.windspeed,
+           l.windDirection,
+           l.VPD
     FROM SensorLog l
     JOIN Sensor s ON s.sensorID = l.sensorID
+    LEFT JOIN SensorType t ON s.typeID = t.typeID
+    LEFT JOIN Location loc ON s.locationID = loc.locationID
     WHERE 1=1
   `
   const params = []
