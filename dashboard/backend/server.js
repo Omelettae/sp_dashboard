@@ -279,8 +279,8 @@ app.post('/api/getDataDHT', async (req, res) => {
   try {
     const { sensorID, temperature, humidity, VPD, time } = req.body;
 
-    if (sensorID == null || temperature == null || humidity == null || VPD == null || time == null ) {
-      return res.status(400).json({ message: 'Missing DHT data' });
+    if (sensorID == null ) {
+      return res.status(400).json({ message: 'Missing Sensor ID' });
     }
 
     const sql = `
@@ -314,14 +314,8 @@ app.post('/api/getDataC5A', async (req, res) => {
 
     if (
       sensorID == null ||
-      windSpeed == null ||
-      windDirection == null ||
-      temperature == null ||
-      humidity == null ||
-      VPD == null ||
-      time == null
     ) {
-      return res.status(400).json({ message: 'Missing C5A data' });
+      return res.status(400).json({ message: 'Missing Sensor ID' });
     }
 
     const sql = `
