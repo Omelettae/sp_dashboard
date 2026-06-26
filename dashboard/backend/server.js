@@ -47,8 +47,9 @@ app.post('/api/registerSensor', async (req, res) => {
     const {
       deviceUUID,
       sensorType,
-      locationName
-    } = req.body;
+      locationName,
+      description
+    } = req.body || {};
 
     // Validate input
     if (!deviceUUID || !sensorType || !locationName) {
@@ -110,10 +111,10 @@ app.post('/api/registerSensor', async (req, res) => {
 
       const [result] = await pool.execute(
         `
-        INSERT INTO Location (locationName)
-        VALUES (?)
+        INSERT INTO Location (locationName, description)
+        VALUES (?, ?)
         `,
-        [locationName]
+        [locationName, description || null]
       );
 
       locationID = result.insertId;
@@ -145,6 +146,16 @@ app.post('/api/registerSensor', async (req, res) => {
     );
 
     if (existingSensor.length > 0) {
+      if (description) {
+        await pool.execute(
+          `
+          UPDATE Sensor
+          SET sensorDescription = ?
+          WHERE sensorID = ?
+          `,
+          [description, existingSensor[0].sensorID]
+        );
+      }
 
       return res.status(200).json({
         success: true,
@@ -163,14 +174,16 @@ app.post('/api/registerSensor', async (req, res) => {
       INSERT INTO Sensor (
         typeID,
         locationID,
-        deviceUUID
+        deviceUUID,
+        sensorDescription
       )
-      VALUES (?, ?, ?)
+      VALUES (?, ?, ?, ?)
       `,
       [
         typeID,
         locationID,
-        deviceUUID
+        deviceUUID,
+        description || null
       ]
     );
 
@@ -312,15 +325,13 @@ app.post('/api/getDataC5A', async (req, res) => {
   try {
     const { sensorID, windSpeed, windDirection, temperature, humidity, VPD, time } = req.body;
 
-    if (
-      sensorID == null ||
-    ) {
+    if (sensorID == null) {
       return res.status(400).json({ message: 'Missing Sensor ID' });
     }
 
     const sql = `
       INSERT INTO SensorLog
-      (sensorID, datetime, temperature, humidity windspeed, windDirection,  VPD)
+      (sensorID, datetime, temperature, humidity, windspeed, windDirection, VPD)
       VALUES (?, ?, ?, ?, ?, ?, ?)
     `;
 
