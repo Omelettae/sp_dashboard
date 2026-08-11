@@ -67,8 +67,6 @@ CREATE TABLE SensorLog (
 CREATE TABLE DeviceStatus (
     statusID BIGINT AUTO_INCREMENT PRIMARY KEY,
     sensorID INT NOT NULL,
-    batteryLevel DECIMAL(5,2),
-    signalStrength INT,
     lastHeartbeat TIMESTAMP,
 
     FOREIGN KEY (sensorID)
