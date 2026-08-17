@@ -33,6 +33,16 @@ RESPONSE_LENGTH = 15
 READ_RETRIES = 1
 RETRY_BUDGET_FRACTION = 0.6
 
+# The port is reopened rather than opened once at startup. A USB adapter that
+# is slow to enumerate at boot, or that re-enumerates later, used to leave the
+# sensor dead until somebody noticed and restarted the service.
+SERIAL_RETRY_SECONDS = 30
+
+# A vanished adapter usually reads as short responses rather than raising, so
+# repeated protocol failures also trigger a reopen - but not on the first one,
+# which is more likely to be ordinary line noise.
+REOPEN_AFTER_FAILURES = 3
+
 sensorVPD.cache.init_db()
 
 config = sensorVPD.configReader.readConfig()
@@ -79,36 +89,103 @@ def temp_convert(data: bytes):
     return value
 
 
-try:
-    ser = serial.Serial(
-        port=SERIAL_PORT,
-        baudrate=9600,
-        bytesize=8,
-        parity="N",
-        stopbits=1,
-        timeout=SERIAL_TIMEOUT,
-    )
-except Exception as e:
-    print("Serial initialization failed:", e)
-    ser = None
-
 frame = REQUEST + modbus_crc(REQUEST)
+
+ser = None
+_next_open_attempt = 0.0
+_open_error_logged = False
+_consecutive_failures = 0
+
+
+def open_serial():
+    """Return an open port, or None. Retries are rate-limited so a genuinely
+    absent adapter does not mean an open attempt on every single tick."""
+    global ser, _next_open_attempt, _open_error_logged
+
+    if ser is not None:
+        return ser
+
+    now = time.monotonic()
+
+    if now < _next_open_attempt:
+        return None
+
+    _next_open_attempt = now + SERIAL_RETRY_SECONDS
+
+    try:
+        ser = serial.Serial(
+            port=SERIAL_PORT,
+            baudrate=9600,
+            bytesize=8,
+            parity="N",
+            stopbits=1,
+            timeout=SERIAL_TIMEOUT,
+        )
+        print(f"Serial port opened: {SERIAL_PORT}")
+        _open_error_logged = False
+        return ser
+
+    except Exception as e:
+        # Logged once per outage, not once per tick - the old behaviour filled
+        # the journal with one identical line every 5 s.
+        if not _open_error_logged:
+            print(f"Serial open failed: {e}")
+            print(f"Retrying every {SERIAL_RETRY_SECONDS}s")
+            _open_error_logged = True
+
+        return None
+
+
+def close_serial():
+    """Drop the handle so the next read reopens. A re-enumerated USB adapter
+    comes back on a new descriptor; the old one never starts working again."""
+    global ser
+
+    if ser is None:
+        return
+
+    try:
+        ser.close()
+    except Exception:
+        pass
+
+    ser = None
 
 
 def read_sensor():
-    if ser is None:
+    global _consecutive_failures
+
+    port = open_serial()
+
+    if port is None:
         raise RuntimeError("Serial port not available")
 
-    # Anything left over from a previous timed-out read would shift the frame.
-    ser.reset_input_buffer()
-    ser.write(frame)
-    response = ser.read(RESPONSE_LENGTH)
+    try:
+        # Anything left over from a previous timed-out read would shift the frame.
+        port.reset_input_buffer()
+        port.write(frame)
+        response = port.read(RESPONSE_LENGTH)
 
-    if len(response) < RESPONSE_LENGTH:
-        raise RuntimeError(f"Short modbus response ({len(response)} bytes)")
+    except Exception:
+        # The adapter went away mid-exchange. Reopen on the next tick.
+        close_serial()
+        _consecutive_failures = 0
+        raise
 
-    if modbus_crc(response[:-2]) != response[-2:]:
+    if len(response) < RESPONSE_LENGTH or modbus_crc(response[:-2]) != response[-2:]:
+        _consecutive_failures += 1
+
+        if _consecutive_failures >= REOPEN_AFTER_FAILURES:
+            print(f"{_consecutive_failures} consecutive bad reads - reopening port")
+            close_serial()
+            _consecutive_failures = 0
+
+        if len(response) < RESPONSE_LENGTH:
+            raise RuntimeError(f"Short modbus response ({len(response)} bytes)")
+
         raise RuntimeError("Modbus CRC mismatch")
+
+    _consecutive_failures = 0
 
     data = response[3:11]
     wind_speed = int.from_bytes(data[0:2], "big") * 0.01
@@ -154,6 +231,12 @@ def apply_pending_schedule():
 
 
 client.start()
+
+# Try once up front so a missing adapter is visible at startup rather than
+# only in the first tick's error. Failure is not fatal - the port may still
+# appear, and the loop keeps retrying.
+open_serial()
+
 print(f"C5A loop started (period {scheduler.period}s, boot {client.boot_id})")
 print("Send:", frame.hex(" "))
 print("---------------------------------------------------")
