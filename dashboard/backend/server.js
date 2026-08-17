@@ -679,7 +679,13 @@ const SENSORLOG_INSERT_PREFIX =
 // exactly-once. This no-op update is what keeps that from throwing: the Pi's
 // flush loop only advances a row on a 200 and stops on anything else, so a 500
 // here would wedge that Pi's entire queue behind one duplicate - forever.
-const SENSORLOG_INSERT_SUFFIX = ' ON DUPLICATE KEY UPDATE logID = logID';
+//
+// The no-op is on sensorID, NOT on logID. Assigning to the AUTO_INCREMENT
+// column here makes MySQL reject the whole statement with errno 1869,
+// ER_AUTO_INCREMENT_CONFLICT ("Auto-increment value in UPDATE conflicts with
+// internally generated values") as soon as the insert carries more than one
+// row - so the single-row routes worked and every batch failed.
+const SENSORLOG_INSERT_SUFFIX = ' ON DUPLICATE KEY UPDATE sensorID = sensorID';
 
 /** Maps a request body row onto SENSORLOG_COLUMNS. Returns null if invalid. */
 function toSensorLogValues(row) {
