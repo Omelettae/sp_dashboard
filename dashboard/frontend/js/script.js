@@ -10,7 +10,15 @@ let sensorsCreated = false
 // =====================
 async function loadData() {
   const res = await fetch(`${API}/logs?hours=2`)
-  allData = await res.json()
+  allData = (await res.json()).map(d => ({
+    ...d,
+    sensorName:
+      d.sensorDescription ||
+      ((d.sensorType || d.locationName)
+        ? `${d.sensorType || 'unknown'}_${d.locationName || 'unknown'}`
+        : 'unknown')
+  }))
+  console.log(allData)
 
   if (!sensorsCreated) {
     createSensorCheckboxes()
@@ -26,7 +34,7 @@ async function loadData() {
 // Create sensor toggles
 // =====================
 function createSensorCheckboxes() {
-  const sensors = [...new Set(allData.map(d => d.sensorType))]
+  const sensors = [...new Set(allData.map(d => d.sensorName))]
   const container = document.getElementById("checkboxes")
 
   container.innerHTML = ""
@@ -42,10 +50,6 @@ function createSensorCheckboxes() {
     label.onchange = updateChart
     container.appendChild(label)
   })
-
-  // metric toggles
-  document.querySelectorAll("#metrics input")
-    .forEach(cb => cb.onchange = updateChart)
 }
 
 
@@ -53,7 +57,14 @@ function createSensorCheckboxes() {
 // Build chart once
 // =====================
 function buildChart() {
-  chart = new Chart(document.getElementById("chart"), {
+  buildTempChart()
+  buildHumiChart()
+  buildVPDChart()
+}
+
+
+function buildTempChart() {
+  tempChart = new Chart(document.getElementById("tempChart"), {
     type: "line",
     data: { datasets: [] },
     options: {
@@ -80,70 +91,155 @@ function buildChart() {
 }
 
 
+function buildHumiChart() {
+  humiChart = new Chart(document.getElementById("humiChart"), {
+    type: "line",
+    data: { datasets: [] },
+    options: {
+      animation: false,
+      responsive: true,
+      interaction: {
+        mode: "nearest",
+        intersect: false
+      },
+      scales: {
+        x: {
+          type: "time",
+          time: { unit: "minute" }
+        },
+        y: {
+          title: {
+            display: true,
+            text: "Value"
+          }
+        }
+      }
+    }
+  })
+}
+
+function buildVPDChart() {
+  VPDChart = new Chart(document.getElementById("VPDChart"), {
+    type: "line",
+    data: { datasets: [] },
+    options: {
+      animation: false,
+      responsive: true,
+      interaction: {
+        mode: "nearest",
+        intersect: false
+      },
+      scales: {
+        x: {
+          type: "time",
+          time: { unit: "minute" }
+        },
+        y: {
+          title: {
+            display: true,
+            text: "Value"
+          }
+        }
+      }
+    }
+  })
+}
+
+
+
 // =====================
 // Update datasets
 // =====================
 function updateChart() {
+  updateTempChart()
+  updateHumiChart()
+  updateVPDChart()
+}
+
+function updateTempChart() {
   const selectedSensors =
     [...document.querySelectorAll("#checkboxes input:checked")]
-      .map(c => c.value)
-
-  const selectedMetrics =
-    [...document.querySelectorAll("#metrics input:checked")]
       .map(c => c.value)
 
   const datasets = []
 
   selectedSensors.forEach(sensor => {
 
-    const sensorData = allData.filter(d => d.sensorType === sensor)
+    const sensorData = allData.filter(d => d.sensorName === sensor)
 
-    // Temperature
-    if (selectedMetrics.includes("temperature")) {
-      datasets.push({
-        label: `${sensor} (Temp)`,
-        data: sensorData
-          .filter(d => d.temperature !== null)
-          .map(d => ({
-            x: new Date(d.datetime),
-            y: d.temperature
-          })),
-        fill: false
-      })
-    }
+    datasets.push({
+      label: `${sensor}`,
+      data: sensorData
+        .filter(d => d.temperature !== null)
+        .map(d => ({
+          x: new Date(d.datetime),
+          y: d.temperature
+        })),
+      fill: false
+    })
+  
+  })
 
-    // Humidity
-    if (selectedMetrics.includes("humidity")) {
-      datasets.push({
-        label: `${sensor} (Humidity)`,
-        data: sensorData
-          .filter(d => d.humidity !== null)
-          .map(d => ({
-            x: new Date(d.datetime),
-            y: d.humidity
-          })),
-        fill: false
-      })
-    }
+  tempChart.data.datasets = datasets
+  tempChart.update()
+}
 
-    // VPD
-    if (selectedMetrics.includes("VPD")) {
-      datasets.push({
-        label: `${sensor} (VPD)`,
-        data: sensorData
-          .filter(d => d.VPD !== null)
-          .map(d => ({
-            x: new Date(d.datetime),
-            y: d.VPD
-          })),
-        fill: false
-      })
-    }
+function updateHumiChart() {
+  const selectedSensors =
+    [...document.querySelectorAll("#checkboxes input:checked")]
+      .map(c => c.value)
+
+  const datasets = []
+
+  selectedSensors.forEach(sensor => {
+
+    const sensorData = allData.filter(d => d.sensorName === sensor)
+ 
+    datasets.push({
+      label: `${sensor}`,
+      data: sensorData
+        .filter(d => d.humidity !== null)
+        .map(d => ({
+          x: new Date(d.datetime),
+          y: d.humidity
+        })),
+      fill: false
+    })
+
 
   })
 
-  chart.data.datasets = datasets
-  chart.update()
+  humiChart.data.datasets = datasets
+  humiChart.update()
+}
+
+function updateVPDChart() {
+  const selectedSensors =
+    [...document.querySelectorAll("#checkboxes input:checked")]
+      .map(c => c.value)
+
+  const datasets = []
+
+  selectedSensors.forEach(sensor => {
+
+    const sensorData = allData.filter(d => d.sensorName === sensor)
+ 
+    datasets.push({
+      label: `${sensor}`,
+      data: sensorData
+        .filter(d => d.VPD !== null)
+        .map(d => ({
+          x: new Date(d.datetime),
+          y: d.VPD
+        })),
+      fill: false
+    })
+
+
+  })
+
+  VPDChart.data.datasets = datasets
+  VPDChart.update()
 }
 
 
@@ -151,5 +247,4 @@ function updateChart() {
 // Start
 // =====================
 loadData()
-setInterval(loadData, 5000)
-
+setInterval(loadData, 2500)

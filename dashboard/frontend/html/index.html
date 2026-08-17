@@ -1,7 +1,7 @@
 <!DOCTYPE html>
 <html>
   <a href="index.html">Temp/Humidity/VPD</a> |
-  <a href="wind3.html">Wind</a>
+<a href="wind3.html">Wind</a>
 <hr>
 
 <head>
@@ -9,24 +9,59 @@
 
   <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
   <script src="https://cdn.jsdelivr.net/npm/chartjs-adapter-date-fns"></script>
+  <link rel="stylesheet" href="../style.css">
 </head>
 
 <body>
   <h2>Sensor Dashboard</h2>
 
-  <div id="metrics">
-    <label><input type="checkbox" value="temperature" checked> Temperature</label>
-    <label><input type="checkbox" value="humidity" checked> Humidity</label>
-    <label><input type="checkbox" value="VPD" checked> VPD</label>
+  <h3>Sampling interval</h3>
+  <div class="panel">
+    <label>
+      Period (seconds, minimum 2):
+      <input type="number" id="periodInput" min="2" max="3600" step="1" size="5">
+    </label>
+    <button id="applyPeriod">Apply to all sensors</button>
+    <span id="scheduleStatus" class="muted">loading...</span>
+    <div id="clockSkew" class="muted"></div>
   </div>
-  <br>
 
+  <h3>Devices</h3>
+  <div id="deviceNote" class="muted"></div>
+  <table id="deviceTable">
+    <thead>
+      <tr>
+        <th>ID</th><th>Sensor</th><th>State</th><th>Last seen</th><th>Booted at</th>
+      </tr>
+    </thead>
+    <tbody></tbody>
+  </table>
+
+  <h3>Power / connectivity events</h3>
+  <table id="eventTable">
+    <thead>
+      <tr>
+        <th>Event</th><th>Sensor</th><th>Occurred at</th><th>Detected by</th><th>Detail</th>
+      </tr>
+    </thead>
+    <tbody></tbody>
+  </table>
+
+  <h3>Sensors</h3>
   <div id="checkboxes"></div>
-  <br>
 
-  <canvas id="chart" height="100"></canvas>
+  <h3>Temperature</h3>
+  <canvas id="tempChart" height="100"></canvas>
+
+  <h3>Humidity</h3>
+  <canvas id="humiChart" height="100"></canvas>
+
+  <h3>VPD</h3>
+  <canvas id="VPDChart" height="100"></canvas>
 
   <script src="../js/config.js"></script>
+  <script src="../js/devices.js"></script>
   <script src="../js/script.js"></script>
 </body>
 </html>
+

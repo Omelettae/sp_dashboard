@@ -58,80 +58,34 @@ CREATE TABLE SensorLog (
     windDirection INT,
     VPD DECIMAL(6,2),
 
-    -- Time sync / latency instrumentation (see timeSyncPlan.md §5, §7).
-    -- Appended at the end of the table on purpose: on the live database the
-    -- same columns are added with ALGORITHM=INSTANT, which only works for
-    -- columns added at the end.
-    timeConfidence ENUM('SYNCED','CORRECTED','ESTIMATED','UNKNOWN')
-        NOT NULL DEFAULT 'UNKNOWN',
-    readLatencyMs INT NULL,
-    tickJitterMs INT NULL,
-    queueDelayMs INT NULL,
-    recordedAt TIMESTAMP(6) NOT NULL DEFAULT CURRENT_TIMESTAMP(6),
-
     FOREIGN KEY (sensorID)
         REFERENCES Sensor(sensorID)
         ON DELETE CASCADE
 );
 
--- Dashboard reads default to the last 6 hours of one sensor; without this the
--- query scans the whole (multi-million row) table.
-CREATE INDEX idx_sensorlog_sensor_time ON SensorLog (sensorID, datetime);
-
--- Device status table - one row per sensor, upserted by the heartbeat
+-- Device status table
 CREATE TABLE DeviceStatus (
-    statusID BIGINT AUTO_INCREMENT PRIMARY KEY,
-    sensorID INT NOT NULL,
+    sensorID INT PRIMARY KEY,
+
     batteryLevel DECIMAL(5,2),
     signalStrength INT,
+
+    connectionStatus ENUM(
+        'ONLINE',
+        'OFFLINE',
+        'UNKNOWN'
+    ) DEFAULT 'UNKNOWN',
+
     lastHeartbeat TIMESTAMP NULL,
 
-    lastSeen TIMESTAMP(6) NULL,
-    bootID CHAR(36) NULL,
-    bootAt TIMESTAMP(6) NULL,
-    isOnline BOOLEAN NOT NULL DEFAULT FALSE,
+    updatedAt TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+        ON UPDATE CURRENT_TIMESTAMP,
 
-    UNIQUE KEY uq_devicestatus_sensor (sensorID),
-
-    FOREIGN KEY (sensorID)
+    CONSTRAINT fk_device_status_sensor
+        FOREIGN KEY (sensorID)
         REFERENCES Sensor(sensorID)
         ON DELETE CASCADE
 );
-
--- Device power/connectivity event log.
--- occurredAt = when it actually happened, detectedAt = when the server noticed.
--- For OFFLINE these genuinely differ by the watchdog timeout.
-CREATE TABLE DeviceEvent (
-    eventID    BIGINT AUTO_INCREMENT PRIMARY KEY,
-    sensorID   INT NULL,                       -- NULL for SERVER_START
-    eventType  ENUM('BOOT','ONLINE','OFFLINE','SHUTDOWN','SERVER_START') NOT NULL,
-    occurredAt TIMESTAMP(6) NOT NULL,
-    detectedAt TIMESTAMP(6) NOT NULL DEFAULT CURRENT_TIMESTAMP(6),
-    bootID     CHAR(36) NULL,
-    source     ENUM('HEARTBEAT','BOOT_REPORT','WATCHDOG','BACKLOG_GAP','SHUTDOWN_HOOK') NOT NULL,
-    detail     VARCHAR(255) NULL,
-
-    FOREIGN KEY (sensorID)
-        REFERENCES Sensor(sensorID)
-        ON DELETE CASCADE,
-
-    INDEX idx_deviceevent_sensor_time (sensorID, occurredAt)
-);
-
--- Sampling schedule pushed from the PC. Append-only: every interval change
--- inserts a row, so data spanning a change can be interpreted correctly.
-CREATE TABLE SamplingConfig (
-    configID      INT AUTO_INCREMENT PRIMARY KEY,
-    periodSeconds INT NOT NULL,
-    effectiveFrom TIMESTAMP(6) NOT NULL,
-    active        BOOLEAN NOT NULL DEFAULT TRUE,
-    createdAt     TIMESTAMP(6) NOT NULL DEFAULT CURRENT_TIMESTAMP(6),
-
-    INDEX idx_samplingconfig_effective (effectiveFrom)
-);
-
-INSERT INTO SamplingConfig (periodSeconds, effectiveFrom, active)
-VALUES (5, CURRENT_TIMESTAMP(6), TRUE);
 
 -- Error log table
 CREATE TABLE ErrorLog (

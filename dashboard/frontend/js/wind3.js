@@ -27,7 +27,14 @@ async function loadData() {
   const res = await fetch(url)
 
 
-  allData = await res.json()
+  allData = (await res.json()).map(d => ({
+    ...d,
+    sensorName:
+      d.sensorDescription ||
+      ((d.sensorType || d.locationName)
+        ? `${d.sensorType || 'unknown'}_${d.locationName || 'unknown'}`
+        : 'unknown')
+  }))
 
   // keep only rows with wind
   allData = allData.filter(d => d.windspeed !== null)
@@ -101,7 +108,7 @@ function setupToggle() {
 // Sensor checkboxes
 // =====================
 function createCheckboxes() {
-  const sensors = [...new Set(allData.map(d => d.sensorType))]
+  const sensors = [...new Set(allData.map(d => d.sensorName))]
   const container = document.getElementById("checkboxes")
 
   container.innerHTML = ""
@@ -181,7 +188,7 @@ function buildRoseChart() {
   // =====================
   const selectedSensors = getSelectedSensors()
   const filteredData = allData.filter(d =>
-    selectedSensors.includes(d.sensorType)
+    selectedSensors.includes(d.sensorName)
   )
 
   // =====================
