@@ -99,9 +99,15 @@ async function main() {
   check('/api/devices readable', devices.status === 200, devices.body.message)
   check('/api/devices reports the startup grace window',
         typeof devices.body.inStartupGrace === 'boolean')
+  check('/api/devices is keyed on deviceID, not sensorID',
+        !devices.body.devices?.length ||
+        devices.body.devices[0].deviceID !== undefined)
 
   if (devices.body.devices) {
-    console.log(`     ${devices.body.devices.length} sensor(s), ` +
+    const sensorCount = devices.body.devices
+      .reduce((n, d) => n + (d.sensors?.length || 0), 0)
+    console.log(`     ${devices.body.devices.length} device(s) carrying ` +
+                `${sensorCount} sensor(s), ` +
                 `${devices.body.devices.filter(d => d.isOnline).length} online`)
   }
 
@@ -111,6 +117,10 @@ async function main() {
         Array.isArray(events.body) &&
         events.body.some(e => e.eventType === 'SERVER_START'),
         Array.isArray(events.body) ? events.body.map(e => e.eventType) : events.body)
+  check('SERVER_START carries no deviceID (it is about the backend)',
+        !Array.isArray(events.body) ||
+        events.body.filter(e => e.eventType === 'SERVER_START')
+                   .every(e => e.deviceID === null))
 
   // -- heartbeat / batch need a real sensorID ---------------------------
   const sensors = await get('/api/sensors')
@@ -125,28 +135,57 @@ async function main() {
       sensorID,
       bootID: '00000000-0000-4000-8000-00000000test',
       uptimeSeconds: 120,
+      offsetMs: 3.5,
+      rttMs: 4,
       detail: 'verify_timesync.js'
     })
     check('/api/heartbeat accepted', hb.status === 200, hb.body)
+    check('heartbeat resolved the sensor to a device', hb.body.tracked === true)
 
     const after = await get('/api/devices')
-    const dev = after.body.devices.find(d => d.sensorID === sensorID)
+    const dev = after.body.devices.find(d =>
+      (d.sensors || []).some(s => s.sensorID === sensorID))
     check('heartbeat marks the device online', dev && dev.isOnline)
     check('heartbeat records a boot time from uptime',
           dev && dev.bootAtMs != null &&
           Math.abs(Date.now() - dev.bootAtMs - 120000) < 5000)
+    check('heartbeat records clock health for the device',
+          dev && dev.lastSyncRttMs != null, dev && dev.lastSyncRttMs)
 
-    const nowSql = new Date().toISOString().slice(0, 19).replace('T', ' ')
+    // Distinct ticks: v3 puts UNIQUE (sensorID, datetime) on SensorLog, so two
+    // rows sharing a timestamp would be one insert plus one absorbed duplicate.
+    const t = Date.now()
+    const sqlTime = ms => new Date(ms).toISOString().slice(0, 19).replace('T', ' ')
+    const tickA = sqlTime(t - 10000)
+    const tickB = sqlTime(t - 5000)
+
     const batch = await post('/api/sensorLogBatch', {
       rows: [
-        { sensorID, time: nowSql, temperature: 25.5, humidity: 60, VPD: 1.3,
-          timeConfidence: 'SYNCED', readLatencyMs: 900, tickJitterMs: 4, queueDelayMs: 12 },
-        { sensorID, time: nowSql, temperature: 25.6, humidity: 61, VPD: 1.31,
-          timeConfidence: 'CORRECTED', readLatencyMs: 880, tickJitterMs: 2, queueDelayMs: 380000 }
+        { sensorID, time: tickA, temperature: 25.5, humidity: 60, VPD: 1.3,
+          timeConfidence: 'SYNCED', readLatencyMs: 900, tickJitterMs: 4,
+          queueDelayMs: 12, syncRttMs: 4 },
+        { sensorID, time: tickB, temperature: 25.6, humidity: 61, VPD: 1.31,
+          timeConfidence: 'CORRECTED', readLatencyMs: 880, tickJitterMs: 2,
+          queueDelayMs: 380000, syncRttMs: 6 }
       ]
     })
     check('/api/sensorLogBatch inserts a multi-row batch',
           batch.status === 200 && batch.body.inserted === 2, batch.body)
+
+    // The trap this guards: the Pi's flush loop only advances a row on a 200
+    // and stops on anything else, so a duplicate that threw would wedge that
+    // Pi's whole queue. Re-sending the SAME rows must still return 200.
+    const replay = await post('/api/sensorLogBatch', {
+      rows: [
+        { sensorID, time: tickA, temperature: 25.5, humidity: 60, VPD: 1.3,
+          timeConfidence: 'SYNCED', readLatencyMs: 900, tickJitterMs: 4,
+          queueDelayMs: 12, syncRttMs: 4 }
+      ]
+    })
+    check('re-sending an already-stored row returns 200, not 500',
+          replay.status === 200, replay.body)
+    check('the duplicate was absorbed rather than stored twice',
+          replay.body.stored === 0, { stored: replay.body.stored })
 
     const bad = await post('/api/sensorLogBatch', { rows: [{ sensorID }] })
     check('batch rejects rows missing required fields', bad.status === 400)

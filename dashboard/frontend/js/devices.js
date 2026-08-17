@@ -101,15 +101,23 @@ async function loadDevices() {
 
     tbody.innerHTML = ""
 
+    // A row is a Pi, not a sensor - one power cut is one row, however many
+    // sensors that Pi carries. The sensors it owns are listed alongside.
     body.devices.forEach(d => {
       const row = document.createElement("tr")
-      const name = d.sensorDescription ||
-        `${d.sensorType || "unknown"}_${d.locationName || "unknown"}`
+
+      const name = d.hostname || d.description ||
+        (d.deviceUUID ? d.deviceUUID.slice(0, 8) : `device ${d.deviceID}`)
+
+      const sensors = (d.sensors || [])
+        .map(s => s.sensorDescription ||
+                  `${s.sensorType || "sensor"}_${s.locationName || s.sensorID}`)
+        .join(", ")
 
       row.innerHTML = `
-        <td>${d.sensorID}</td>
-        <td>${name}</td>
-        <td>${d.isOnline ? "ONLINE" : "offline"}</td>
+        <td>${d.deviceID}</td>
+        <td>${name}${sensors ? ` <small>(${sensors})</small>` : ""}</td>
+        <td>${d.connectionStatus === "ONLINE" ? "ONLINE" : d.connectionStatus.toLowerCase()}</td>
         <td>${formatAge(d.secondsSinceLastSeen)}</td>
         <td>${d.bootAtMs ? new Date(d.bootAtMs).toLocaleString() : "-"}</td>
       `
@@ -133,9 +141,11 @@ async function loadDeviceEvents() {
 
     events.forEach(e => {
       const row = document.createElement("tr")
-      const name = e.sensorID == null
+      // deviceID is null for SERVER_START - that event is about the backend,
+      // and it exists so "the PC was off" is distinguishable from "the Pi died".
+      const name = e.deviceID == null
         ? "(server)"
-        : `${e.sensorType || "sensor"}_${e.locationName || e.sensorID}`
+        : e.hostname || (e.deviceUUID ? e.deviceUUID.slice(0, 8) : `device ${e.deviceID}`)
 
       row.innerHTML = `
         <td>${e.eventType}</td>

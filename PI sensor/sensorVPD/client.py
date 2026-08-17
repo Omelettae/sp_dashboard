@@ -322,6 +322,7 @@ class BackendClient:
             "timeConfidence": row["timeConfidence"] or "UNKNOWN",
             "readLatencyMs": row["readLatencyMs"],
             "tickJitterMs": row["tickJitterMs"],
+            "syncRttMs": row["syncRttMs"],
         }
 
         # Tick -> upload attempt. Large values mean this row was replayed from

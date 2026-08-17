@@ -172,6 +172,7 @@ while not stop_event.is_set():
     # Stamped with the tick, not read completion - see dht22.py.
     timestamp = clock.timestamp(tick.epoch)
     confidence = SYNCED if clock.synced else ESTIMATED
+    sync_rtt_ms = None if clock.rtt is None else int(round(clock.rtt * 1000))
 
     read_started = time.monotonic()
     values, error = read_with_retries(tick.period * RETRY_BUDGET_FRACTION)
@@ -199,6 +200,7 @@ while not stop_event.is_set():
             time_confidence=confidence,
             read_latency_ms=read_latency_ms,
             tick_jitter_ms=tick.jitter_ms,
+            sync_rtt_ms=sync_rtt_ms,
         )
 
         print(f"{timestamp} Wind: {wind_speed:.2f}m/s Dir: {wind_direction} "

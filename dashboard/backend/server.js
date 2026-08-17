@@ -76,14 +76,14 @@ async function startServer() {
 
   try {
     await logDeviceEvent({
-      sensorID: null,
+      deviceID: null,
       eventType: 'SERVER_START',
       occurredAtMs: SERVER_STARTED_AT,
       source: 'WATCHDOG',
       detail: `offline detection suppressed for ${STARTUP_GRACE_MS / 1000}s`
     })
   } catch (err) {
-    // Missing DeviceEvent table just means migration_timesync.sql has not run.
+    // Missing DeviceEvent table means the schema has not been created.
     console.warn('SERVER_START event not logged:', err.message)
   }
 
@@ -96,12 +96,37 @@ startServer()
 // DEVICE STATE HELPERS
 // ===========================================================================
 
-async function logDeviceEvent({ sensorID, eventType, occurredAtMs, bootID, source, detail }) {
+/**
+ * Sensor -> Device. A power cut takes out the whole Pi, so status, events and
+ * sessions are keyed on the device; the Pis only ever report a sensorID.
+ *
+ * Cached for the process lifetime: uq_sensor_identity includes deviceID, so a
+ * Sensor row's device never changes - a different device is a different row.
+ */
+const deviceIDBySensor = new Map()
+
+async function resolveDeviceID(sensorID) {
+  if (sensorID == null) return null
+
+  const cached = deviceIDBySensor.get(sensorID)
+  if (cached !== undefined) return cached
+
+  const [rows] = await pool.execute(
+    'SELECT deviceID FROM Sensor WHERE sensorID = ?',
+    [sensorID]
+  )
+
+  const deviceID = rows.length ? rows[0].deviceID : null
+  if (deviceID != null) deviceIDBySensor.set(sensorID, deviceID)
+  return deviceID
+}
+
+async function logDeviceEvent({ deviceID, eventType, occurredAtMs, bootID, source, detail }) {
   const [result] = await pool.execute(
-    `INSERT INTO DeviceEvent (sensorID, eventType, occurredAt, bootID, source, detail)
+    `INSERT INTO DeviceEvent (deviceID, eventType, occurredAt, bootID, source, detail)
      VALUES (?, ?, ?, ?, ?, ?)`,
     [
-      sensorID ?? null,
+      deviceID ?? null,
       eventType,
       toSqlDateTime(occurredAtMs ?? Date.now()),
       bootID ?? null,
@@ -113,16 +138,60 @@ async function logDeviceEvent({ sensorID, eventType, occurredAtMs, bootID, sourc
 }
 
 /**
- * Records proof of life for a sensor and emits BOOT / ONLINE events on
+ * Opens a powered-on period. UNIQUE (deviceID, bootID) makes this idempotent:
+ * a repeated boot report - first heartbeat lands but its response is lost -
+ * produces one session, not several.
+ */
+async function openSession(deviceID, bootID, startedAtMs, previousEndMs) {
+  // A session still open on a NEW bootID means the device came back before the
+  // watchdog noticed it had gone. Close it at its last proof of life; accuracy
+  // is UNKNOWN because nothing observed the actual power-off.
+  await pool.execute(
+    `UPDATE DeviceSession
+     SET endedAt = ?, endReason = 'POWER_LOSS', endAccuracy = 'UNKNOWN'
+     WHERE deviceID = ? AND endedAt IS NULL AND (bootID IS NULL OR bootID <> ?)`,
+    [toSqlDateTime(previousEndMs ?? startedAtMs), deviceID, bootID]
+  )
+
+  await pool.execute(
+    `INSERT INTO DeviceSession (deviceID, bootID, startedAt)
+     VALUES (?, ?, ?)
+     ON DUPLICATE KEY UPDATE sessionID = sessionID`,
+    [deviceID, bootID, toSqlDateTime(startedAtMs)]
+  )
+}
+
+/** endAccuracy exists so a rough watchdog estimate is never mistaken for a
+ *  precise one - see databaseChanges.md. */
+async function closeSession(deviceID, endedAtMs, endReason, endAccuracy) {
+  await pool.execute(
+    `UPDATE DeviceSession
+     SET endedAt = ?, endReason = ?, endAccuracy = ?
+     WHERE deviceID = ? AND endedAt IS NULL`,
+    [toSqlDateTime(endedAtMs), endReason, endAccuracy, deviceID]
+  )
+}
+
+/**
+ * Records proof of life for a device and emits BOOT / ONLINE events on
  * transitions. Any upload counts as a heartbeat, not just /api/heartbeat.
  */
-async function markSeen(sensorID, { nowMs, bootID, uptimeSeconds, source, detail } = {}) {
-  if (sensorID == null) return
+async function markSeen(sensorID, { nowMs, bootID, uptimeSeconds, source, detail,
+                                    offsetMs, rttMs } = {}) {
+  const deviceID = await resolveDeviceID(sensorID)
+
+  // An unknown sensorID means the Pi is holding an ID from another database -
+  // the v2 -> v3 cutover being the obvious way that happens. Silently doing
+  // nothing would leave that Pi untracked forever, so say so.
+  if (deviceID == null) return false
 
   const seenAt = nowMs ?? Date.now()
+
+  // Snapshot taken BEFORE the upsert below - the transition checks and the
+  // session close both need the previous state, not the one we are writing.
   const [rows] = await pool.execute(
-    'SELECT bootID, isOnline FROM DeviceStatus WHERE sensorID = ?',
-    [sensorID]
+    'SELECT bootID, connectionStatus, lastHeartbeat FROM DeviceStatus WHERE deviceID = ?',
+    [deviceID]
   )
   const previous = rows[0] || null
 
@@ -131,39 +200,57 @@ async function markSeen(sensorID, { nowMs, bootID, uptimeSeconds, source, detail
     bootAtMs = seenAt - Number(uptimeSeconds) * 1000
   }
 
+  // Clock health is per device: it lets the dashboard show a Pi drifting
+  // before its data is affected. Only stamped when the Pi actually reported a
+  // sync, so an upload-driven touch does not blank it.
+  const syncedNow = rttMs != null || offsetMs != null
+
   await pool.execute(
-    `INSERT INTO DeviceStatus (sensorID, lastSeen, lastHeartbeat, bootID, bootAt, isOnline)
-     VALUES (?, ?, ?, ?, ?, TRUE)
+    `INSERT INTO DeviceStatus
+       (deviceID, lastHeartbeat, bootID, bootAt, connectionStatus,
+        lastSyncAt, lastSyncOffsetMs, lastSyncRttMs)
+     VALUES (?, ?, ?, ?, 'ONLINE', ?, ?, ?)
      ON DUPLICATE KEY UPDATE
-       lastSeen = VALUES(lastSeen),
        lastHeartbeat = VALUES(lastHeartbeat),
        bootID = COALESCE(VALUES(bootID), bootID),
        bootAt = COALESCE(VALUES(bootAt), bootAt),
-       isOnline = TRUE`,
+       connectionStatus = 'ONLINE',
+       lastSyncAt = COALESCE(VALUES(lastSyncAt), lastSyncAt),
+       lastSyncOffsetMs = COALESCE(VALUES(lastSyncOffsetMs), lastSyncOffsetMs),
+       lastSyncRttMs = COALESCE(VALUES(lastSyncRttMs), lastSyncRttMs)`,
     [
-      sensorID,
-      toSqlDateTime(seenAt),
+      deviceID,
       toSqlDateTime(seenAt),
       bootID ?? null,
-      bootAtMs == null ? null : toSqlDateTime(bootAtMs)
+      bootAtMs == null ? null : toSqlDateTime(bootAtMs),
+      syncedNow ? toSqlDateTime(seenAt) : null,
+      toInt(offsetMs),
+      toInt(rttMs)
     ]
   )
 
-  // A new bootID for a known sensor IS the power-on event.
+  // A new bootID for a known device IS the power-on event.
   if (bootID && (!previous || previous.bootID !== bootID)) {
     await logDeviceEvent({
-      sensorID,
+      deviceID,
       eventType: 'BOOT',
       occurredAtMs: bootAtMs ?? seenAt,
       bootID,
       source: 'BOOT_REPORT',
       detail: uptimeSeconds == null ? 'uptime unavailable' : `uptime ${Math.round(uptimeSeconds)}s`
     })
+
+    await openSession(
+      deviceID,
+      bootID,
+      bootAtMs ?? seenAt,
+      previous ? toEpochMs(previous.lastHeartbeat) : null
+    )
   }
 
-  if (!previous || !previous.isOnline) {
+  if (!previous || previous.connectionStatus !== 'ONLINE') {
     await logDeviceEvent({
-      sensorID,
+      deviceID,
       eventType: 'ONLINE',
       occurredAtMs: seenAt,
       bootID: bootID ?? null,
@@ -171,6 +258,8 @@ async function markSeen(sensorID, { nowMs, bootID, uptimeSeconds, source, detail
       detail: detail ?? null
     })
   }
+
+  return true
 }
 
 // markSeen costs a SELECT plus an upsert. Uploads are proof of life too, but
@@ -205,31 +294,36 @@ async function runOfflineWatchdog() {
 
   try {
     const [rows] = await pool.query(
-      `SELECT sensorID, lastSeen, bootID
+      `SELECT deviceID, lastHeartbeat, bootID
        FROM DeviceStatus
-       WHERE isOnline = TRUE
-         AND lastSeen IS NOT NULL
-         AND lastSeen < NOW(6) - INTERVAL ? SECOND`,
+       WHERE connectionStatus = 'ONLINE'
+         AND lastHeartbeat IS NOT NULL
+         AND lastHeartbeat < NOW(6) - INTERVAL ? SECOND`,
       [Math.round(OFFLINE_AFTER_MS / 1000)]
     )
 
     for (const row of rows) {
+      const lastSeenMs = toEpochMs(row.lastHeartbeat) ?? now
+
       await pool.execute(
-        'UPDATE DeviceStatus SET isOnline = FALSE WHERE sensorID = ?',
-        [row.sensorID]
+        `UPDATE DeviceStatus SET connectionStatus = 'OFFLINE' WHERE deviceID = ?`,
+        [row.deviceID]
       )
       // occurredAt is the last proof of life; detectedAt (default) is now.
       // The gap between them is the watchdog timeout, and gets refined later
       // from the backlog once the Pi reconnects.
       await logDeviceEvent({
-        sensorID: row.sensorID,
+        deviceID: row.deviceID,
         eventType: 'OFFLINE',
-        occurredAtMs: toEpochMs(row.lastSeen) ?? now,
+        occurredAtMs: lastSeenMs,
         bootID: row.bootID,
         source: 'WATCHDOG',
         detail: `no contact for ${Math.round(OFFLINE_AFTER_MS / 1000)}s`
       })
-      console.log(`Watchdog: sensor ${row.sensorID} marked OFFLINE`)
+
+      await closeSession(row.deviceID, lastSeenMs, 'POWER_LOSS', 'WATCHDOG')
+
+      console.log(`Watchdog: device ${row.deviceID} marked OFFLINE`)
     }
   } catch (err) {
     console.error('Offline watchdog error:', err.message)
@@ -529,16 +623,27 @@ app.post('/api/ErrorLog', async (req, res) => {
       return res.status(400).json({ message: 'Error message is required' });
     }
 
+    // createdAt is server insert time. A read failure on an offline Pi is only
+    // reported once the network returns, so a 2am fault would otherwise be
+    // stamped 8am - occurredAt carries the device's own time instead.
+    const occurredAtMs = toInt(req.body.occurredAtMs);
+    const confidence = TIME_CONFIDENCE.includes(req.body.timeConfidence)
+      ? req.body.timeConfidence
+      : 'UNKNOWN';
+
     const sql = `
-      INSERT INTO ErrorLog (sensorID, errorType, errorMessage, severity)
-      VALUES (?, ?, ?, ?)
+      INSERT INTO ErrorLog
+        (sensorID, errorType, errorMessage, severity, occurredAt, timeConfidence)
+      VALUES (?, ?, ?, ?, ?, ?)
     `;
 
     const [result] = await pool.execute(sql, [
       sensorID || null,
       errorType || 'UNKNOWN',
       errorMessage,
-      severity || 'LOW'
+      severity || 'LOW',
+      occurredAtMs == null ? null : toSqlDateTime(occurredAtMs),
+      confidence
     ]);
 
     res.status(200).json({
@@ -562,13 +667,19 @@ app.post('/api/ErrorLog', async (req, res) => {
 
 const SENSORLOG_COLUMNS = [
   'sensorID', 'datetime', 'temperature', 'humidity', 'windspeed', 'windDirection', 'VPD',
-  'timeConfidence', 'readLatencyMs', 'tickJitterMs', 'queueDelayMs'
+  'timeConfidence', 'readLatencyMs', 'tickJitterMs', 'queueDelayMs', 'syncRttMs'
 ];
 
 const SENSORLOG_PLACEHOLDERS = `(${SENSORLOG_COLUMNS.map(() => '?').join(', ')})`;
 
 const SENSORLOG_INSERT_PREFIX =
   `INSERT INTO SensorLog (${SENSORLOG_COLUMNS.join(', ')}) VALUES `;
+
+// Ticks are deterministic, so UNIQUE (sensorID, datetime) makes upload retries
+// exactly-once. This no-op update is what keeps that from throwing: the Pi's
+// flush loop only advances a row on a 200 and stops on anything else, so a 500
+// here would wedge that Pi's entire queue behind one duplicate - forever.
+const SENSORLOG_INSERT_SUFFIX = ' ON DUPLICATE KEY UPDATE logID = logID';
 
 /** Maps a request body row onto SENSORLOG_COLUMNS. Returns null if invalid. */
 function toSensorLogValues(row) {
@@ -594,7 +705,8 @@ function toSensorLogValues(row) {
     confidence,
     toInt(row.readLatencyMs),
     toInt(row.tickJitterMs),
-    toInt(row.queueDelayMs)
+    toInt(row.queueDelayMs),
+    toInt(row.syncRttMs)
   ];
 }
 
@@ -607,7 +719,7 @@ app.post('/api/getDataDHT', async (req, res) => {
     }
 
     const [result] = await pool.execute(
-      SENSORLOG_INSERT_PREFIX + SENSORLOG_PLACEHOLDERS,
+      SENSORLOG_INSERT_PREFIX + SENSORLOG_PLACEHOLDERS + SENSORLOG_INSERT_SUFFIX,
       values
     );
 
@@ -615,7 +727,8 @@ app.post('/api/getDataDHT', async (req, res) => {
 
     res.status(200).json({
       success: true,
-      logID: result.insertId
+      logID: result.insertId,
+      duplicate: result.affectedRows === 0
     });
 
   } catch (err) {
@@ -641,7 +754,7 @@ app.post('/api/getDataC5A', async (req, res) => {
     }
 
     const [result] = await pool.execute(
-      SENSORLOG_INSERT_PREFIX + SENSORLOG_PLACEHOLDERS,
+      SENSORLOG_INSERT_PREFIX + SENSORLOG_PLACEHOLDERS + SENSORLOG_INSERT_SUFFIX,
       values
     );
 
@@ -649,7 +762,8 @@ app.post('/api/getDataC5A', async (req, res) => {
 
     res.status(200).json({
       success: true,
-      logID: result.insertId
+      logID: result.insertId,
+      duplicate: result.affectedRows === 0
     });
 
   } catch (err) {
@@ -699,15 +813,20 @@ app.post('/api/sensorLogBatch', async (req, res) => {
     }
 
     const sql = SENSORLOG_INSERT_PREFIX +
-      values.map(() => SENSORLOG_PLACEHOLDERS).join(', ');
+      values.map(() => SENSORLOG_PLACEHOLDERS).join(', ') +
+      SENSORLOG_INSERT_SUFFIX;
 
     const [result] = await pool.query(sql, values.flat());
 
     [...new Set(values.map(v => v[0]))].forEach(id => touchSeen(id, 'batch upload'));
 
+    // `inserted` counts rows accepted, which is what the Pi needs to know to
+    // clear them from its cache. `stored` excludes duplicates the unique key
+    // absorbed - a replayed backlog can legitimately be all duplicates.
     res.status(200).json({
       success: true,
       inserted: values.length,
+      stored: result.affectedRows,
       firstLogID: result.insertId,
       rejected
     });
@@ -731,7 +850,7 @@ app.post('/api/sensorLogBatch', async (req, res) => {
 app.get('/api/schedule', async (req, res) => {
   try {
     const [rows] = await pool.query(
-      `SELECT configID, periodSeconds, effectiveFrom, active, createdAt
+      `SELECT configID, periodSeconds, effectiveFrom, active, note, createdAt
        FROM SamplingConfig
        ORDER BY configID DESC
        LIMIT 1`
@@ -753,8 +872,11 @@ app.get('/api/schedule', async (req, res) => {
     res.json({
       configID: row.configID,
       periodSeconds: row.periodSeconds,
-      effectiveFromMs: toEpochMs(row.effectiveFrom),
+      // Stored as a Unix epoch in ms, not a datetime: it is the instant a new
+      // period takes effect and every Pi must derive the same tick from it.
+      effectiveFromMs: Number(row.effectiveFrom),
       active: !!row.active,
+      note: row.note,
       serverEpochMs: now
     });
 
@@ -793,10 +915,12 @@ app.post('/api/schedule', async (req, res) => {
     try {
       await conn.beginTransaction();
       await conn.execute('UPDATE SamplingConfig SET active = FALSE WHERE active = TRUE');
+      // Append-only: each change inserts a row so the sampling rate at any past
+      // instant stays recoverable when analysing data spanning a change.
       const [result] = await conn.execute(
-        `INSERT INTO SamplingConfig (periodSeconds, effectiveFrom, active)
-         VALUES (?, ?, TRUE)`,
-        [periodSeconds, toSqlDateTime(effectiveFromMs)]
+        `INSERT INTO SamplingConfig (periodSeconds, effectiveFrom, active, note)
+         VALUES (?, ?, TRUE, ?)`,
+        [periodSeconds, effectiveFromMs, req.body.note || null]
       );
       await conn.commit();
 
@@ -833,15 +957,24 @@ app.post('/api/heartbeat', async (req, res) => {
       return res.status(400).json({ success: false, message: 'sensorID is required' });
     }
 
-    await markSeen(sensorID, {
+    const tracked = await markSeen(sensorID, {
       bootID: req.body.bootID || null,
       uptimeSeconds: req.body.uptimeSeconds,
       source: 'HEARTBEAT',
-      detail: req.body.detail || null
+      detail: req.body.detail || null,
+      offsetMs: req.body.offsetMs,
+      rttMs: req.body.rttMs
     });
+
+    if (!tracked) {
+      console.warn(`heartbeat from unknown sensorID ${sensorID} - stale registration?`);
+    }
 
     res.json({
       success: true,
+      // false means this sensorID does not exist here; the Pi should
+      // re-register rather than keep heartbeating into nothing.
+      tracked: !!tracked,
       serverEpochMs: Date.now(),
       offlineAfterSeconds: Math.round(OFFLINE_AFTER_MS / 1000)
     });
@@ -864,9 +997,10 @@ app.post('/api/deviceEvent', async (req, res) => {
     }
 
     const occurredAtMs = toInt(req.body.occurredAtMs) ?? Date.now();
+    const deviceID = await resolveDeviceID(sensorID);
 
     const eventID = await logDeviceEvent({
-      sensorID,
+      deviceID,
       eventType,
       occurredAtMs,
       bootID: req.body.bootID || null,
@@ -874,14 +1008,17 @@ app.post('/api/deviceEvent', async (req, res) => {
       detail: req.body.detail || null
     });
 
-    if (eventType === 'SHUTDOWN' && sensorID != null) {
+    if (eventType === 'SHUTDOWN' && deviceID != null) {
       await pool.execute(
-        'UPDATE DeviceStatus SET isOnline = FALSE WHERE sensorID = ?',
-        [sensorID]
+        `UPDATE DeviceStatus SET connectionStatus = 'OFFLINE' WHERE deviceID = ?`,
+        [deviceID]
       );
+      // A clean stop is the one case where the end time is exact rather than
+      // inferred, so it is recorded as such.
+      await closeSession(deviceID, occurredAtMs, 'SHUTDOWN', 'SHUTDOWN_HOOK');
     }
 
-    res.status(201).json({ success: true, eventID });
+    res.status(201).json({ success: true, eventID, deviceID });
 
   } catch (err) {
     console.error('deviceEvent error:', err);
@@ -891,22 +1028,45 @@ app.post('/api/deviceEvent', async (req, res) => {
 
 app.get('/api/devices', async (req, res) => {
   try {
+    // One row per DEVICE, not per sensor: a power cut takes out the whole Pi,
+    // so reporting per sensor would show one outage twice on a Pi hosting two.
     const [rows] = await pool.query(
-      `SELECT s.sensorID,
-              s.sensorDescription,
-              t.sensorType,
-              loc.locationName,
-              d.lastSeen,
-              d.bootID,
-              d.bootAt,
-              COALESCE(d.isOnline, FALSE) AS isOnline,
-              TIMESTAMPDIFF(SECOND, d.lastSeen, NOW(6)) AS secondsSinceLastSeen
+      `SELECT dev.deviceID,
+              dev.deviceUUID,
+              dev.hostname,
+              dev.description,
+              st.connectionStatus,
+              st.lastHeartbeat,
+              st.bootID,
+              st.bootAt,
+              st.lastSyncAt,
+              st.lastSyncOffsetMs,
+              st.lastSyncRttMs,
+              TIMESTAMPDIFF(SECOND, st.lastHeartbeat, NOW(6)) AS secondsSinceLastSeen
+       FROM Device dev
+       LEFT JOIN DeviceStatus st ON st.deviceID = dev.deviceID
+       ORDER BY dev.deviceID`
+    );
+
+    const [sensors] = await pool.query(
+      `SELECT s.sensorID, s.deviceID, s.sensorDescription,
+              t.sensorType, loc.locationName
        FROM Sensor s
-       LEFT JOIN DeviceStatus d ON d.sensorID = s.sensorID
-       LEFT JOIN SensorType t ON s.typeID = t.typeID
-       LEFT JOIN Location loc ON s.locationID = loc.locationID
+       LEFT JOIN SensorType t ON t.typeID = s.typeID
+       LEFT JOIN Location loc ON loc.locationID = s.locationID
        ORDER BY s.sensorID`
     );
+
+    const sensorsByDevice = new Map();
+    for (const s of sensors) {
+      if (!sensorsByDevice.has(s.deviceID)) sensorsByDevice.set(s.deviceID, []);
+      sensorsByDevice.get(s.deviceID).push({
+        sensorID: s.sensorID,
+        sensorType: s.sensorType,
+        locationName: s.locationName,
+        sensorDescription: s.sensorDescription
+      });
+    }
 
     res.json({
       serverEpochMs: Date.now(),
@@ -916,9 +1076,12 @@ app.get('/api/devices', async (req, res) => {
       inStartupGrace: Date.now() - SERVER_STARTED_AT < STARTUP_GRACE_MS,
       devices: rows.map(r => ({
         ...r,
-        isOnline: !!r.isOnline,
-        lastSeenMs: toEpochMs(r.lastSeen),
-        bootAtMs: toEpochMs(r.bootAt)
+        connectionStatus: r.connectionStatus || 'UNKNOWN',
+        isOnline: r.connectionStatus === 'ONLINE',
+        lastSeenMs: toEpochMs(r.lastHeartbeat),
+        bootAtMs: toEpochMs(r.bootAt),
+        lastSyncAtMs: toEpochMs(r.lastSyncAt),
+        sensors: sensorsByDevice.get(r.deviceID) || []
       }))
     });
 
@@ -931,24 +1094,26 @@ app.get('/api/devices', async (req, res) => {
 app.get('/api/deviceEvents', async (req, res) => {
   try {
     const limit = Math.min(toInt(req.query.limit) ?? 100, 1000);
-    const sensorID = toInt(req.query.sensorID);
     const hours = toInt(req.query.hours);
 
+    // Accepts either key. A caller holding a sensorID still gets that sensor's
+    // Pi, since events are recorded per device.
+    const deviceID = toInt(req.query.deviceID) ??
+      await resolveDeviceID(toInt(req.query.sensorID));
+
     let query = `
-      SELECT e.eventID, e.sensorID, e.eventType, e.occurredAt, e.detectedAt,
+      SELECT e.eventID, e.deviceID, e.eventType, e.occurredAt, e.detectedAt,
              e.bootID, e.source, e.detail,
-             loc.locationName, t.sensorType
+             dev.deviceUUID, dev.hostname
       FROM DeviceEvent e
-      LEFT JOIN Sensor s ON s.sensorID = e.sensorID
-      LEFT JOIN SensorType t ON s.typeID = t.typeID
-      LEFT JOIN Location loc ON s.locationID = loc.locationID
+      LEFT JOIN Device dev ON dev.deviceID = e.deviceID
       WHERE 1=1
     `;
     const params = [];
 
-    if (sensorID != null) {
-      query += ' AND e.sensorID = ?';
-      params.push(sensorID);
+    if (deviceID != null) {
+      query += ' AND e.deviceID = ?';
+      params.push(deviceID);
     }
 
     if (hours != null) {

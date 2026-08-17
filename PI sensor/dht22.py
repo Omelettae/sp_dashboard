@@ -133,6 +133,9 @@ while not stop_event.is_set():
     # exercise. The real read duration is stored separately in readLatencyMs.
     timestamp = clock.timestamp(tick.epoch)
     confidence = SYNCED if clock.synced else ESTIMATED
+    # The sync in force for THIS reading - captured at the tick, because the
+    # background thread may resync before the row is uploaded.
+    sync_rtt_ms = None if clock.rtt is None else int(round(clock.rtt * 1000))
 
     read_started = time.monotonic()
     values, error = read_with_retries(tick.period * RETRY_BUDGET_FRACTION)
@@ -158,6 +161,7 @@ while not stop_event.is_set():
             time_confidence=confidence,
             read_latency_ms=read_latency_ms,
             tick_jitter_ms=tick.jitter_ms,
+            sync_rtt_ms=sync_rtt_ms,
         )
 
         print(f"{timestamp} ({gpio}) Temp: {temperature:.1f}C "

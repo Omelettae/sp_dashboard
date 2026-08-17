@@ -56,6 +56,9 @@ EXTRA_COLUMNS = (
     ("timeConfidence", "TEXT DEFAULT 'UNKNOWN'"),
     ("readLatencyMs", "INTEGER"),
     ("tickJitterMs", "INTEGER"),
+    # RTT of the clock sync in force when this reading was taken. Without it a
+    # latency figure is a point value; with it the report can carry error bars.
+    ("syncRttMs", "INTEGER"),
 )
 
 
@@ -108,7 +111,7 @@ def init_db():
 def save_reading(timestamp, temperature, humidity, vpd, windspeed=None,
                  windDirection=None, sensor_id=None, stream=None, boot_id=None,
                  monotonic=None, tick_epoch=None, time_confidence=UNKNOWN,
-                 read_latency_ms=None, tick_jitter_ms=None):
+                 read_latency_ms=None, tick_jitter_ms=None, sync_rtt_ms=None):
     conn = _connect()
     try:
         conn.execute(
@@ -116,14 +119,14 @@ def save_reading(timestamp, temperature, humidity, vpd, windspeed=None,
             INSERT INTO SensorLog (
                 sensorID, datetime, temperature, humidity, windspeed,
                 windDirection, VPD, stream, bootID, monotonic, tickEpoch,
-                timeConfidence, readLatencyMs, tickJitterMs
+                timeConfidence, readLatencyMs, tickJitterMs, syncRttMs
             )
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             """,
             (
                 sensor_id, timestamp, temperature, humidity, windspeed,
                 windDirection, vpd, stream, boot_id, monotonic, tick_epoch,
-                time_confidence, read_latency_ms, tick_jitter_ms,
+                time_confidence, read_latency_ms, tick_jitter_ms, sync_rtt_ms,
             ),
         )
         conn.commit()
@@ -144,7 +147,8 @@ def get_unsent(stream=None, limit=DEFAULT_FLUSH_LIMIT):
         query = (
             "SELECT logID AS id, sensorID, datetime AS timestamp, temperature, "
             "humidity, windspeed, windDirection, VPD AS vpd, stream, bootID, "
-            "monotonic, tickEpoch, timeConfidence, readLatencyMs, tickJitterMs "
+            "monotonic, tickEpoch, timeConfidence, readLatencyMs, tickJitterMs, "
+            "syncRttMs "
             "FROM SensorLog WHERE uploaded = 0"
         )
         params = []
