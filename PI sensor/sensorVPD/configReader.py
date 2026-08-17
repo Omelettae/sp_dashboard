@@ -39,13 +39,60 @@ def resolve_config_path(filename=None):
     return path
 
 
+def _parse_text_config(text):
+    """Plain-text config, one `key: value` per line:
+
+        Type: DHT22
+        Location: Inside Dome 1
+        GPIO: D17
+
+    Split on the FIRST colon only, so a value containing one survives. Blank
+    lines and # comments are skipped. Values stay strings; readConfig() does
+    the only conversion that matters (Period -> float).
+    """
+    data = {}
+
+    for raw in text.splitlines():
+        line = raw.strip()
+
+        if not line or line.startswith("#"):
+            continue
+
+        key, separator, value = line.partition(":")
+
+        # A line with no colon is not a setting - ignore rather than guess.
+        if not separator:
+            continue
+
+        key = key.strip()
+
+        if key:
+            data[key] = value.strip()
+
+    return data
+
+
 def readConfig(filename=None):
-    """Read the sensor's config. The file is JSON, despite what older copies
-    of the README showed."""
+    """Read the sensor's config.
+
+    Accepts either JSON or `key: value` text. JSON is tried first, so files in
+    either format work and Pis can be converted one at a time rather than all
+    at once.
+    """
     path = resolve_config_path(filename)
 
     with open(path, "r") as file:
-        config_data = json.load(file)
+        raw = file.read()
+
+    try:
+        config_data = json.loads(raw)
+    except ValueError:
+        config_data = _parse_text_config(raw)
+
+    if not isinstance(config_data, dict):
+        raise ValueError(
+            f"{path}: expected a set of settings, got {type(config_data).__name__}"
+        )
 
     sensor_type = config_data.get("Type") or config_data.get("sensorType") or config_data.get("type")
     location = config_data.get("Location") or config_data.get("locationName") or config_data.get("location")
@@ -61,6 +108,15 @@ def readConfig(filename=None):
         period = float(period) if period is not None else DEFAULT_PERIOD_SECONDS
     except (TypeError, ValueError):
         period = DEFAULT_PERIOD_SECONDS
+
+    # /api/registerSensor rejects a payload without these, and a sensor that
+    # never registers just caches locally forever. Failing here names the file
+    # instead of leaving a 400 to be traced back from the dashboard.
+    if not sensor_type or not location:
+        raise ValueError(
+            f"{path}: 'Type' and 'Location' are required "
+            f"(got Type={sensor_type!r}, Location={location!r})"
+        )
 
     return {
         "deviceUUID": get_device_uuid(),

@@ -93,6 +93,26 @@ def _migrate(conn):
             "WHERE stream IS NULL"
         )
 
+    if "syncRttMs" in added:
+        # One-time, on the upgrade to the v3-compatible client.
+        #
+        # A tickEpoch means the row came from the tick-driven sampler, so it is
+        # real synchronised data and must still be uploaded. A NULL tickEpoch
+        # means the free-running loop wrote it, with a clock that had drifted
+        # since boot - that is v2 data by definition, and letting it flush into
+        # v3 would put unsynchronised readings in the clean dataset.
+        #
+        # Marked uploaded rather than deleted: the rows stay on the Pi if the
+        # old data is ever wanted.
+        retired = conn.execute(
+            "UPDATE SensorLog SET uploaded = 1 "
+            "WHERE uploaded = 0 AND tickEpoch IS NULL"
+        ).rowcount
+
+        if retired:
+            print(f"[cache] retired {retired} pre-tick row(s) - "
+                  f"free-running data is not uploaded to v3")
+
 
 def init_db():
     conn = _connect()

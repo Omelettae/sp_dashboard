@@ -46,21 +46,32 @@ sudo timedatectl set-ntp false
 
 # Config files
 
-`config.txt` is **JSON**, one per sensor:
+`config.txt` is one per sensor, written as `key: value` lines:
 
-```json
-{
-  "Type": "DHT22",
-  "Location": "Outside Dome 1",
-  "GPIO": "D17",
-  "description": "outside north wall",
-  "Period": 5
-}
+```
+Type: DHT22
+Location: Outside Dome 1
+GPIO: D17
+description: outside north wall
+Period: 5
 ```
 
-`Period` is optional and only a local fallback — the sampling interval comes
-from the PC (`POST /api/schedule`) once the backend is reachable. Minimum is
-2 s, the DHT22 datasheet limit.
+Blank lines and `#` comments are ignored. Only the first colon on a line
+separates the key from the value, so a location like `Dome 1: north bay` works.
+
+JSON is also accepted, so existing files keep working:
+
+```json
+{ "Type": "DHT22", "Location": "Outside Dome 1", "GPIO": "D17" }
+```
+
+`Type` and `Location` are required — together with the device UUID they are
+what identifies a sensor to the backend, and a missing one raises at startup
+rather than failing later as a rejected registration.
+
+`description` is optional. `Period` is optional too, and only a local fallback
+— the sampling interval comes from the PC (`POST /api/schedule`) once the
+backend is reachable. Minimum is 2 s, the DHT22 datasheet limit.
 
 For the C5A there is no GPIO key; the serial port is used instead.
 
