@@ -173,6 +173,31 @@ async function closeSession(deviceID, endedAtMs, endReason, endAccuracy) {
 }
 
 /**
+ * Undo a close that turned out to be wrong.
+ *
+ * The watchdog infers POWER_LOSS from silence, but silence is equally a
+ * network outage or a stalled upload. A device that comes back carrying the
+ * bootID it already had never rebooted, so it never lost power and the session
+ * should not have ended. Without this it stays closed until the next real
+ * boot, leaving a running device with no open session and understated uptime.
+ *
+ * Keyed on bootID, so a genuine power cycle - which always brings a new one -
+ * cannot be reopened by mistake.
+ */
+async function reopenSession(deviceID, bootID) {
+  if (!bootID) return false
+
+  const [result] = await pool.execute(
+    `UPDATE DeviceSession
+     SET endedAt = NULL, endReason = NULL, endAccuracy = NULL
+     WHERE deviceID = ? AND bootID = ? AND endedAt IS NOT NULL`,
+    [deviceID, bootID]
+  )
+
+  return result.affectedRows > 0
+}
+
+/**
  * Records proof of life for a device and emits BOOT / ONLINE events on
  * transitions. Any upload counts as a heartbeat, not just /api/heartbeat.
  */
@@ -249,13 +274,20 @@ async function markSeen(sensorID, { nowMs, bootID, uptimeSeconds, source, detail
   }
 
   if (!previous || previous.connectionStatus !== 'ONLINE') {
+    // Same bootID means no power cycle, so any recorded end to that session was
+    // inferred from silence and is wrong. A new bootID cannot match here - that
+    // case already opened a fresh session above.
+    const reopened = await reopenSession(deviceID, bootID)
+
     await logDeviceEvent({
       deviceID,
       eventType: 'ONLINE',
       occurredAtMs: seenAt,
       bootID: bootID ?? null,
       source: source || 'HEARTBEAT',
-      detail: detail ?? null
+      detail: reopened
+        ? 'session reopened - same boot, so the outage was contact only'
+        : detail ?? null
     })
   }
 
