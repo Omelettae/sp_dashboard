@@ -3,9 +3,9 @@
 -- Merge Actuator with database_v3
 -- v3af add stuff related to fan
 
-DROP DATABASE IF EXISTS sensor_dashboard_v3a;
-CREATE DATABASE sensor_dashboard_v3a;
-USE sensor_dashboard_v3a;
+DROP DATABASE IF EXISTS sensor_dashboard_v3af;
+CREATE DATABASE sensor_dashboard_v3af;
+USE sensor_dashboard_v3af;
 
 -- Location table
 CREATE TABLE Location (
