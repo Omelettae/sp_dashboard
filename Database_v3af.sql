@@ -1,6 +1,7 @@
 -- sensor_dashboard v3a
 -- Schema only. See databaseChanges.md for what changed, why, and how to deploy.
 -- Merge Actuator with database_v3
+-- v3af add stuff related to fan
 
 DROP DATABASE IF EXISTS sensor_dashboard_v3a;
 CREATE DATABASE sensor_dashboard_v3a;
