@@ -274,17 +274,19 @@ CREATE TABLE ActuatorType (
 
 CREATE TABLE Actuator (
     actuatorID      INT AUTO_INCREMENT PRIMARY KEY,
+    deviceID        INT NOT NULL,
     typeID          INT NOT NULL,
     locationID      INT,
-    deviceUUID      CHAR(36) NOT NULL UNIQUE,
     actuatorName    VARCHAR(100),
     description     TEXT NULL,
     status          ENUM('ON','OFF','IDLE') DEFAULT 'IDLE',
     statusUpdatedAt TIMESTAMP NULL,
     isActive        BOOLEAN DEFAULT TRUE,
     createdAt       TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    CONSTRAINT fk_actuator_device FOREIGN KEY (deviceID) REFERENCES Device(deviceID) ON DELETE CASCADE,
     CONSTRAINT fk_actuator_type FOREIGN KEY (typeID) REFERENCES ActuatorType(typeID),
-    CONSTRAINT fk_actuator_location FOREIGN KEY (locationID) REFERENCES Location(locationID) ON DELETE SET NULL
+    CONSTRAINT fk_actuator_location FOREIGN KEY (locationID) REFERENCES Location(locationID) ON DELETE SET NULL,
+    CONSTRAINT uq_actuator_identity UNIQUE (deviceID, typeID, locationID)
 );
 
 CREATE TABLE ActuatorStatus (
