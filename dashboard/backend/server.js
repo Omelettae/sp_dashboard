@@ -65,6 +65,254 @@ function toInt(value) {
   return Number.isFinite(n) ? n : null
 }
 
+// =========================
+// === start of v2.2.1af ===
+// =========================
+function toFloat(value, decimals = 2) {
+  if (value == null || value === '') return null
+  const n = Number(value)
+  return Number.isFinite(n) ? Number(n.toFixed(decimals)) : null
+}
+
+// ===========================================================================
+// ACTUATOR CONTROL (fan PWM + tach)
+//
+// Same pull model as /api/schedule: the Pi cannot be pushed to, so a "command"
+// is just the latest MANUAL/AUTOMATION row in ActuatorLog. The Pi polls for it.
+// Periodic telemetry (rpm/pulseCount/dutyPercent) is written as its own
+// ActuatorLog row with triggerSource='SYSTEM' so it never gets picked up as
+// a command, plus a matching ActuatorStatus row for health/heartbeat.
+// ===========================================================================
+
+const ACTUATOR_ACTIONS = ['ON', 'OFF', 'SET_SPEED'];
+const TRIGGER_SOURCES = ['MANUAL', 'AUTOMATION', 'SYSTEM'];
+
+// Find-or-create, mirrors registerSensor
+app.post('/api/registerActuator', async (req, res) => {
+  try {
+    const { deviceUUID, actuatorType, locationName, actuatorName, description } = req.body;
+
+    if (!deviceUUID || !actuatorType) {
+      return res.status(400).json({
+        success: false,
+        message: 'deviceUUID and actuatorType are required'
+      });
+    }
+
+    // Find or create ActuatorType
+    let [typeRows] = await pool.execute(
+      'SELECT typeID FROM ActuatorType WHERE typeName = ?',
+      [actuatorType]
+    );
+    let typeID;
+    if (typeRows.length === 0) {
+      const [result] = await pool.execute(
+        'INSERT INTO ActuatorType (typeName) VALUES (?)',
+        [actuatorType]
+      );
+      typeID = result.insertId;
+    } else {
+      typeID = typeRows[0].typeID;
+    }
+
+    // Find or create Location (optional)
+    let locationID = null;
+    if (locationName) {
+      let [locRows] = await pool.execute(
+        'SELECT locationID FROM Location WHERE locationName = ?',
+        [locationName]
+      );
+      if (locRows.length === 0) {
+        const [result] = await pool.execute(
+          'INSERT INTO Location (locationName) VALUES (?)',
+          [locationName]
+        );
+        locationID = result.insertId;
+      } else {
+        locationID = locRows[0].locationID;
+      }
+    }
+
+    // Find or create Actuator by deviceUUID (UNIQUE, same upsert pattern as Device)
+    await pool.execute(
+      `INSERT INTO Actuator (typeID, locationID, deviceUUID, actuatorName, description)
+       VALUES (?, ?, ?, ?, ?)
+       ON DUPLICATE KEY UPDATE actuatorID = actuatorID`,
+      [typeID, locationID, deviceUUID, actuatorName || null, description || null]
+    );
+
+    const [actuatorRows] = await pool.execute(
+      'SELECT actuatorID FROM Actuator WHERE deviceUUID = ?',
+      [deviceUUID]
+    );
+
+    res.status(200).json({
+      success: true,
+      actuatorID: actuatorRows[0].actuatorID,
+      typeID,
+      locationID
+    });
+
+  } catch (err) {
+    console.error('registerActuator error:', err);
+    res.status(500).json({ success: false, error: err.message });
+  }
+});
+
+// Dashboard/rule -> issue a command (ON / OFF / SET_SPEED)
+app.post('/api/actuatorCommand', async (req, res) => {
+  try {
+    const actuatorID = toInt(req.body.actuatorID);
+    const action = req.body.action;
+    const pwmDutyPercent = toFloat(req.body.pwmDutyPercent);
+    const triggerSource = TRIGGER_SOURCES.includes(req.body.triggerSource)
+      ? req.body.triggerSource
+      : 'MANUAL';
+
+    if (actuatorID == null || !ACTUATOR_ACTIONS.includes(action)) {
+      return res.status(400).json({
+        success: false,
+        message: `actuatorID required, action must be one of ${ACTUATOR_ACTIONS.join(', ')}`
+      });
+    }
+
+    if (action === 'SET_SPEED' && (pwmDutyPercent == null || pwmDutyPercent < 0 || pwmDutyPercent > 100)) {
+      return res.status(400).json({
+        success: false,
+        message: 'pwmDutyPercent (0-100) required for SET_SPEED'
+      });
+    }
+
+    // status column only holds ON/OFF/IDLE; SET_SPEED implies the fan is running
+    const newStatus = action === 'SET_SPEED' ? 'ON' : action;
+
+    await pool.execute(
+      'UPDATE Actuator SET status = ?, statusUpdatedAt = NOW(6) WHERE actuatorID = ?',
+      [newStatus, actuatorID]
+    );
+
+    const [result] = await pool.execute(
+      `INSERT INTO ActuatorLog (actuatorID, action, pwmDutyPercent, triggerSource)
+       VALUES (?, ?, ?, ?)`,
+      [actuatorID, action, pwmDutyPercent, triggerSource]
+    );
+
+    res.status(201).json({ success: true, actionID: result.insertId });
+
+  } catch (err) {
+    console.error('actuatorCommand error:', err);
+    res.status(500).json({ success: false, error: err.message });
+  }
+});
+
+// Pi polls this to find out what it should be doing
+app.get('/api/actuatorCommand', async (req, res) => {
+  try {
+    const actuatorID = toInt(req.query.actuatorID);
+    if (actuatorID == null) {
+      return res.status(400).json({ success: false, message: 'actuatorID is required' });
+    }
+
+    // Latest real command, excluding SYSTEM telemetry rows
+    const [rows] = await pool.execute(
+      `SELECT action, pwmDutyPercent, recordedAt
+       FROM ActuatorLog
+       WHERE actuatorID = ? AND triggerSource IN ('MANUAL','AUTOMATION')
+       ORDER BY recordedAt DESC
+       LIMIT 1`,
+      [actuatorID]
+    );
+
+    if (rows.length === 0) {
+      return res.json({ success: true, action: 'OFF', pwmDutyPercent: 0, serverEpochMs: Date.now() });
+    }
+
+    res.json({
+      success: true,
+      action: rows[0].action,
+      pwmDutyPercent: rows[0].pwmDutyPercent,
+      commandedAtMs: toEpochMs(rows[0].recordedAt),
+      serverEpochMs: Date.now()
+    });
+
+  } catch (err) {
+    console.error('actuatorCommand read error:', err);
+    res.status(500).json({ success: false, error: err.message });
+  }
+});
+
+// Pi pushes back telemetry (duty applied, pulses counted, derived rpm)
+app.post('/api/actuatorStatus', async (req, res) => {
+  try {
+    const actuatorID = toInt(req.body.actuatorID);
+    const pwmDutyPercent = toFloat(req.body.pwmDutyPercent);
+    const pulseCount = toInt(req.body.pulseCount);
+    const rpm = toInt(req.body.rpm);
+    const powerDraw = toFloat(req.body.powerDraw);
+    const signalStrength = toInt(req.body.signalStrength);
+
+    if (actuatorID == null) {
+      return res.status(400).json({ success: false, message: 'actuatorID is required' });
+    }
+
+    await pool.execute(
+      `INSERT INTO ActuatorStatus (actuatorID, powerDraw, signalStrength, pwmDutyPercent, lastHeartbeat)
+       VALUES (?, ?, ?, ?, NOW(6))`,
+      [actuatorID, powerDraw, signalStrength, pwmDutyPercent]
+    );
+
+    // Feedback reading, kept separate from real commands via triggerSource='SYSTEM'
+    await pool.execute(
+      `INSERT INTO ActuatorLog (actuatorID, action, pwmDutyPercent, pulseCount, rpm, triggerSource)
+       VALUES (?, 'SET_SPEED', ?, ?, ?, 'SYSTEM')`,
+      [actuatorID, pwmDutyPercent, pulseCount, rpm]
+    );
+
+    res.status(200).json({ success: true });
+
+  } catch (err) {
+    console.error('actuatorStatus error:', err);
+    res.status(500).json({ success: false, error: err.message });
+  }
+});
+
+// List actuators + latest known status, like /api/devices
+app.get('/api/actuators', async (req, res) => {
+  try {
+    const [rows] = await pool.query(
+      `SELECT a.actuatorID, a.deviceUUID, a.actuatorName, a.description,
+              a.status, a.statusUpdatedAt, a.isActive,
+              at.typeName, loc.locationName,
+              ls.pwmDutyPercent AS lastDutyPercent,
+              ls.lastHeartbeat AS lastTelemetryAt,
+              ll.rpm AS lastRpm, ll.pulseCount AS lastPulseCount
+       FROM Actuator a
+       LEFT JOIN ActuatorType at ON at.typeID = a.typeID
+       LEFT JOIN Location loc ON loc.locationID = a.locationID
+       LEFT JOIN ActuatorStatus ls ON ls.statusID = (
+         SELECT MAX(statusID) FROM ActuatorStatus WHERE actuatorID = a.actuatorID
+       )
+       LEFT JOIN ActuatorLog ll ON ll.actionID = (
+         SELECT MAX(actionID) FROM ActuatorLog
+         WHERE actuatorID = a.actuatorID AND rpm IS NOT NULL
+       )
+       ORDER BY a.actuatorID`
+    );
+
+    res.json({
+      serverEpochMs: Date.now(),
+      actuators: rows.map(r => ({ ...r, statusUpdatedAtMs: toEpochMs(r.statusUpdatedAt) }))
+    });
+
+  } catch (err) {
+    console.error('actuators error:', err);
+    res.status(500).json({ success: false, error: err.message });
+  }
+});
+// =======================
+// === end of v2.2.1af ===
+// =======================
+
 async function startServer() {
   try {
     await pool.query('SELECT 1') // test DB
