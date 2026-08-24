@@ -85,6 +85,23 @@ function formatAge(seconds) {
   return `${Math.floor(seconds / 3600)}h ago`
 }
 
+// A device is a Pi, and what makes one recognisable is what it measures and
+// where - not 36 characters of hex. The full UUID stays on the row as a
+// tooltip, for the times you genuinely need to match it to a device_uuid.txt.
+function deviceLabel(d) {
+  if (d.hostname) return d.hostname
+  if (d.description) return d.description
+
+  // Set(): two DHT22s at the same location would otherwise print twice.
+  const sensors = [...new Set(
+    (d.sensors || []).map(s => `${s.sensorType || "sensor"} @ ${s.locationName || "?"}`)
+  )]
+
+  if (sensors.length) return sensors.join(", ")
+
+  return d.deviceUUID ? d.deviceUUID.slice(0, 8) : `device ${d.deviceID}`
+}
+
 async function loadDevices() {
   const tbody = document.querySelector("#deviceTable tbody")
   const note = document.getElementById("deviceNote")
@@ -102,21 +119,15 @@ async function loadDevices() {
     tbody.innerHTML = ""
 
     // A row is a Pi, not a sensor - one power cut is one row, however many
-    // sensors that Pi carries. The sensors it owns are listed alongside.
+    // sensors that Pi carries. deviceLabel() names it after what it measures.
     body.devices.forEach(d => {
       const row = document.createElement("tr")
 
-      const name = d.hostname || d.description ||
-        (d.deviceUUID ? d.deviceUUID.slice(0, 8) : `device ${d.deviceID}`)
-
-      const sensors = (d.sensors || [])
-        .map(s => s.sensorDescription ||
-                  `${s.sensorType || "sensor"}_${s.locationName || s.sensorID}`)
-        .join(", ")
+      const label = deviceLabel(d)
 
       row.innerHTML = `
         <td>${d.deviceID}</td>
-        <td>${name}${sensors ? ` <small>(${sensors})</small>` : ""}</td>
+        <td title="${d.deviceUUID || ""}">${label}</td>
         <td>${d.connectionStatus === "ONLINE" ? "ONLINE" : d.connectionStatus.toLowerCase()}</td>
         <td>${formatAge(d.secondsSinceLastSeen)}</td>
         <td>${d.bootAtMs ? new Date(d.bootAtMs).toLocaleString() : "-"}</td>
@@ -130,40 +141,6 @@ async function loadDevices() {
   }
 }
 
-async function loadDeviceEvents() {
-  const tbody = document.querySelector("#eventTable tbody")
-
-  try {
-    const res = await fetch(`${DEVICE_API}/deviceEvents?limit=25`)
-    const events = await res.json()
-
-    tbody.innerHTML = ""
-
-    events.forEach(e => {
-      const row = document.createElement("tr")
-      // deviceID is null for SERVER_START - that event is about the backend,
-      // and it exists so "the PC was off" is distinguishable from "the Pi died".
-      const name = e.deviceID == null
-        ? "(server)"
-        : e.hostname || (e.deviceUUID ? e.deviceUUID.slice(0, 8) : `device ${e.deviceID}`)
-
-      row.innerHTML = `
-        <td>${e.eventType}</td>
-        <td>${name}</td>
-        <td>${new Date(e.occurredAtMs).toLocaleString()}</td>
-        <td>${e.source}</td>
-        <td>${e.detail || ""}</td>
-      `
-
-      tbody.appendChild(row)
-    })
-
-  } catch (err) {
-    // The tables just stay as they were.
-  }
-}
-
-
 // =====================
 // Start
 // =====================
@@ -172,7 +149,6 @@ document.getElementById("applyPeriod").onclick = applySchedule
 function refreshDevicePanel() {
   loadSchedule()
   loadDevices()
-  loadDeviceEvents()
 }
 
 refreshDevicePanel()
