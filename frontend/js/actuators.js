@@ -3,7 +3,7 @@
 // =====================
 const ACTUATOR_API = window.CONFIG.API
 
-const MIST_TYPE = "MIST_MAKER"
+const MIST_TYPE = "Mist Maker"
 const DEFAULT_RUN_SECONDS = 60
 
 // The Pi reports at least once a minute. Three missed reports is the point at
