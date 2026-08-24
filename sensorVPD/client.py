@@ -314,7 +314,19 @@ class BackendClient:
 
     def _row_payload(self, row, now_epoch):
         payload = {
-            "sensorID": self.sensor_id,
+            # The row's OWN sensorID, recorded when it was read - not this
+            # client's.
+            #
+            # Two dht22.py processes on one Pi share sensor_cache.db and both
+            # use stream "DHT", so get_unsent(stream="DHT") hands whichever
+            # client flushes first the rows from BOTH sensors. Stamping
+            # self.sensor_id on all of them silently filed one sensor's
+            # readings under the other, in alternating blocks depending on
+            # which process won the race to flush.
+            #
+            # Falls back for rows cached before registration completed, whose
+            # sensorID is NULL because client.sensor_id was still None.
+            "sensorID": row["sensorID"] or self.sensor_id,
             "temperature": row["temperature"],
             "humidity": row["humidity"],
             "VPD": row["vpd"],
