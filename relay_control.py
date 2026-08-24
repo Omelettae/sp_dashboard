@@ -30,9 +30,13 @@ THE BOARD TOGGLES
 
 DRIFT
     A missed pulse, a power glitch, someone pressing the button on the board -
-    the belief can end up wrong and nothing in software can detect it. When
-    that happens: stop the service, run `relay_control.py flip`, start it
-    again. Rare enough that a bench command beats building UI for it.
+    the belief can end up wrong and nothing in software can detect it. The
+    dashboard then confidently shows the opposite of what the mister is doing.
+
+    With two states, a disagreement is always exactly one toggle out, so one
+    pulse fixes it: stop the service, run `relay_control.py flip`, start it
+    again. The relay ends up matching what the dashboard already said. Rare
+    enough that a bench command beats building UI for it.
 
 LET IT CRASH
     systemd restarts this with Restart=always, so there is no retry ladder and
@@ -67,6 +71,15 @@ NETWORK_LIST = Path(os.environ.get("MIST_NETWORK_LIST", BASE_DIR / "networkList.
 # BEFORE the first start - afterwards is too late, a second UUID has already
 # been minted and registered.
 UUID_FILE = Path(os.environ.get("SENSOR_UUID_FILE", BASE_DIR / "device_uuid.txt"))
+
+USAGE = """usage: relay_control.py <mode>
+
+  serve    poll the dashboard and obey it (this is what systemd runs)
+  <n>      mist for n seconds, then stop
+  flip     send one raw pulse, to bring a drifted relay back into
+           agreement with what the dashboard shows
+
+There is no default mode - see the note at the bottom of this file."""
 
 BACKEND_PORT = 5000
 DEFAULT_POLL_SECONDS = 5
@@ -165,15 +178,25 @@ def run_for(seconds: float) -> None:
 
 
 def flip() -> None:
-    """One raw pulse, and flip the stored belief to match.
+    """One raw pulse, leaving the believed state alone.
 
-    For when the belief and the hardware have come apart. This is the only
-    other place allowed to call fire().
+    For when the belief and the hardware have come apart. With only two states
+    any disagreement is exactly one toggle, so a single pulse is enough - and
+    it is the HARDWARE that moves, because the belief is what the dashboard is
+    already showing.
+
+    Deliberately does not touch the belief. Pulsing and inverting would move
+    both, leaving them exactly as far apart as they started:
+
+        drifted        believed OFF, actually ON
+        after fire()   believed OFF, actually OFF   <- already correct
+        after invert   believed ON,  actually OFF   <- broken again
+
+    This is the only place other than set_state() allowed to call fire().
     """
     fire()
-    STATE["believed"] = "OFF" if STATE["believed"] == "ON" else "ON"
-    save_state()
-    print(f"[mist] flipped - now believed {STATE['believed']}")
+    print(f"[mist] pulsed - the relay should now be {STATE['believed']}, "
+          f"which is what the dashboard shows")
 
 
 # ---------------------------------------------------------------------------
@@ -445,17 +468,38 @@ def serve():
 
 
 if __name__ == "__main__":
+    # Arguments first, before reading any file, so a usage error is not buried
+    # under startup chatter about missing config or state.
+    #
+    # No default mode on purpose. The original single-mode script treated a
+    # bare call as "mist for 60 seconds", which is now a trap: someone
+    # expecting the service types `relay_control.py`, gets a silent 60-second
+    # run, and sees no attempt to reach the backend. Nothing here touches the
+    # hardware unless it was asked to.
+    if len(sys.argv) < 2:
+        raise SystemExit(USAGE)
+
+    arg = sys.argv[1]
+    seconds = None
+
+    if arg not in ("serve", "flip"):
+        try:
+            seconds = float(arg)
+        except ValueError:
+            raise SystemExit(f"[mist] unknown mode {arg!r}\n\n{USAGE}")
+
+        if seconds <= 0:
+            raise SystemExit(f"[mist] run length must be positive, got {seconds}")
+
     # Every mode, not just serve: a bench run must pulse the same pin the
     # service does.
     GPIO_PIN = read_gpio()
 
     load_state()
 
-    arg = sys.argv[1] if len(sys.argv) > 1 else "60"
-
     if arg == "serve":
         serve()
     elif arg == "flip":
         flip()
     else:
-        run_for(float(arg))
+        run_for(seconds)

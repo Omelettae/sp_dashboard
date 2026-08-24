@@ -89,11 +89,24 @@ itself will leave the belief wrong, and with no readback nothing can detect
 that. The dashboard will confidently show the opposite of what the mister is
 doing.
 
+With only two states, a disagreement is always exactly **one toggle** out. So
+one raw pulse fixes it, and it is the hardware that moves — the belief is what
+the dashboard is already showing.
+
 ```
 sudo systemctl stop mist
-python3 relay_control.py flip     # one pulse, and the stored belief flips with it
+python3 relay_control.py flip     # one pulse, belief left alone
 sudo systemctl start mist
 ```
+
+`flip` deliberately does **not** change the stored belief. Pulsing *and*
+inverting would move both and leave them just as far apart:
+
+| | believed | actually |
+|---|---|---|
+| drifted | OFF | ON |
+| after the pulse | OFF | OFF — correct |
+| if it also inverted | ON | OFF — broken again |
 
 If `mist_state.json` is missing entirely, the script assumes OFF and says so on
 startup. That is the only assumption that cannot itself turn the mister on, but
